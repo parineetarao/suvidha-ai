@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Environment secrets
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+postgres-data/
+redis-data/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Alembic — commit versions/, don't commit local overrides
+alembic/versions/__pycache__/
+
+# ML models cache (don't push a 500MB file)
+.cache/
+models/
+*.bin
+*.safetensors
