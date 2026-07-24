@@ -181,6 +181,56 @@ export const S = {
     labelOccupation: { 'hi-IN': 'व्यवसाय', 'mr-IN': 'व्यवसाय', 'en-IN': 'Occupation' } as Str,
     labelIncome: { 'hi-IN': 'वार्षिक आय', 'mr-IN': 'वार्षिक उत्पन्न', 'en-IN': 'Annual Income' } as Str,
     labelLand: { 'hi-IN': 'ज़मीन का आकार', 'mr-IN': 'जमिनीचा आकार', 'en-IN': 'Land Size' } as Str,
+
+    // Application Preparation Form (scheme-specific sample application)
+    labelGender: { 'hi-IN': 'लिंग', 'mr-IN': 'लिंग', 'en-IN': 'Gender' } as Str,
+    labelDistrict: { 'hi-IN': 'ज़िला', 'mr-IN': 'जिल्हा', 'en-IN': 'District' } as Str,
+    labelMobile: { 'hi-IN': 'मोबाइल नंबर', 'mr-IN': 'मोबाइल क्रमांक', 'en-IN': 'Mobile Number' } as Str,
+    labelAadhaarBankLinked: { 'hi-IN': 'आधार-बैंक लिंक स्थिति', 'mr-IN': 'आधार-बँक लिंक स्थिती', 'en-IN': 'Aadhaar-Linked Bank Status' } as Str,
+    labelFarmerCategory: { 'hi-IN': 'किसान श्रेणी', 'mr-IN': 'शेतकरी प्रवर्ग', 'en-IN': 'Farmer Category' } as Str,
+    labelLandOwnership: { 'hi-IN': 'ज़मीन स्वामित्व स्थिति', 'mr-IN': 'जमीन मालकी स्थिती', 'en-IN': 'Land Ownership Status' } as Str,
+    labelLandArea: { 'hi-IN': 'ज़मीन का क्षेत्रफल (एकड़ में)', 'mr-IN': 'जमिनीचे क्षेत्रफळ (एकरमध्ये)', 'en-IN': 'Land Area (in acres)' } as Str,
+    labelSurveyNumber: { 'hi-IN': 'सर्वे / गट नंबर', 'mr-IN': 'सर्वे / गट क्रमांक', 'en-IN': 'Survey / Gat Number' } as Str,
+    labelBankName: { 'hi-IN': 'बैंक का नाम', 'mr-IN': 'बँकेचे नाव', 'en-IN': 'Bank Name' } as Str,
+    labelAccountNumber: { 'hi-IN': 'खाता संख्या', 'mr-IN': 'खाते क्रमांक', 'en-IN': 'Account Number' } as Str,
+    labelIfsc: { 'hi-IN': 'IFSC कोड', 'mr-IN': 'IFSC कोड', 'en-IN': 'IFSC Code' } as Str,
+
+    genderMale: { 'hi-IN': 'पुरुष', 'mr-IN': 'पुरुष', 'en-IN': 'Male' } as Str,
+    genderFemale: { 'hi-IN': 'महिला', 'mr-IN': 'महिला', 'en-IN': 'Female' } as Str,
+    genderOther: { 'hi-IN': 'अन्य', 'mr-IN': 'इतर', 'en-IN': 'Other' } as Str,
+
+    farmerCategoryMarginal: { 'hi-IN': 'सीमांत किसान (1 हेक्टेयर से कम)', 'mr-IN': 'सीमांत शेतकरी (1 हेक्टरपेक्षा कमी)', 'en-IN': 'Marginal Farmer (below 1 hectare)' } as Str,
+    farmerCategorySmall: { 'hi-IN': 'लघु किसान (1–2 हेक्टेयर)', 'mr-IN': 'अल्पभूधारक शेतकरी (1–2 हेक्टर)', 'en-IN': 'Small Farmer (1–2 hectares)' } as Str,
+    farmerCategoryOther: { 'hi-IN': 'अन्य किसान (2 हेक्टेयर से अधिक)', 'mr-IN': 'इतर शेतकरी (2 हेक्टरपेक्षा जास्त)', 'en-IN': 'Other Farmer (above 2 hectares)' } as Str,
+
+    landOwnershipOwned: { 'hi-IN': 'स्वयं के स्वामित्व में', 'mr-IN': 'स्वतःच्या मालकीची', 'en-IN': 'Owned' } as Str,
+    landOwnershipJoint: { 'hi-IN': 'संयुक्त स्वामित्व', 'mr-IN': 'संयुक्त मालकी', 'en-IN': 'Joint Ownership' } as Str,
+    landOwnershipLeased: { 'hi-IN': 'पट्टे पर ली गई', 'mr-IN': 'भाड्याने घेतलेली', 'en-IN': 'Leased' } as Str,
+
+    yesOption: { 'hi-IN': 'हाँ', 'mr-IN': 'हो', 'en-IN': 'Yes' } as Str,
+    noOption: { 'hi-IN': 'नहीं', 'mr-IN': 'नाही', 'en-IN': 'No' } as Str,
+    selectPlaceholder: { 'hi-IN': 'चुनें', 'mr-IN': 'निवडा', 'en-IN': 'Select' } as Str,
+
+    formSectionPersonal: { 'hi-IN': 'व्यक्तिगत जानकारी', 'mr-IN': 'वैयक्तिक माहिती', 'en-IN': 'Personal Details' } as Str,
+    formSectionLand: { 'hi-IN': 'ज़मीन का विवरण', 'mr-IN': 'जमिनीचा तपशील', 'en-IN': 'Land Details' } as Str,
+    formSectionBank: { 'hi-IN': 'बैंक विवरण', 'mr-IN': 'बँक तपशील', 'en-IN': 'Bank Details' } as Str,
+
+    validationRequired: { 'hi-IN': 'यह जानकारी आवश्यक है', 'mr-IN': 'ही माहिती आवश्यक आहे', 'en-IN': 'This field is required' } as Str,
+    validationMobile: { 'hi-IN': 'कृपया 10 अंकों का सही मोबाइल नंबर डालें', 'mr-IN': 'कृपया 10 अंकी योग्य मोबाइल क्रमांक टाका', 'en-IN': 'Please enter a valid 10-digit mobile number' } as Str,
+    validationIfsc: { 'hi-IN': 'कृपया सही IFSC कोड डालें (जैसे SBIN0001234)', 'mr-IN': 'कृपया योग्य IFSC कोड टाका (उदा. SBIN0001234)', 'en-IN': 'Please enter a valid IFSC code (e.g. SBIN0001234)' } as Str,
+    validationLandArea: { 'hi-IN': 'कृपया ज़मीन का क्षेत्रफल संख्या में डालें', 'mr-IN': 'कृपया जमिनीचे क्षेत्रफळ संख्येत टाका', 'en-IN': 'Please enter the land area as a number' } as Str,
+    validationFixErrors: { 'hi-IN': 'आगे बढ़ने से पहले ऊपर दी गई गलतियों को ठीक करें।', 'mr-IN': 'पुढे जाण्यापूर्वी वरील चुका दुरुस्त करा.', 'en-IN': 'Please fix the errors above before continuing.' } as Str,
+
+    applicationFormTitle: { 'hi-IN': 'आवेदन फॉर्म', 'mr-IN': 'अर्ज फॉर्म', 'en-IN': 'Application Form' } as Str,
+    applicationFormSubtitle: {
+      'hi-IN': 'यह जानकारी दस्तावेज़ जाँच के दौरान आपके नाम से मिलान करने में मदद करेगी।',
+      'mr-IN': 'ही माहिती कागदपत्र तपासणी दरम्यान तुमच्या नावाशी जुळवण्यास मदत करेल.',
+      'en-IN': 'This information will help match your name during the document check.',
+    } as Str,
+    requiredDocumentsForScheme: { 'hi-IN': 'इस योजना के लिए आवश्यक दस्तावेज़', 'mr-IN': 'या योजनेसाठी आवश्यक कागदपत्रे', 'en-IN': 'Required Documents for this Scheme' } as Str,
+    iHaveThisDocument: { 'hi-IN': 'मेरे पास यह दस्तावेज़ है', 'mr-IN': 'माझ्याकडे हे कागदपत्र आहे', 'en-IN': 'I have this document' } as Str,
+    checkDocumentReadinessBtn: { 'hi-IN': 'दस्तावेज़ तैयारी जाँचें', 'mr-IN': 'कागदपत्र तयारी तपासा', 'en-IN': 'Check Document Readiness' } as Str,
+    backToOverview: { 'hi-IN': '← अवलोकन पर वापस जाएं', 'mr-IN': '← आढाव्याकडे परत जा', 'en-IN': '← Back to Overview' } as Str,
   },
 
   // ── LANDING PAGE ────────────────────────────────────────────

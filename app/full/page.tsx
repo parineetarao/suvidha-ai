@@ -12,6 +12,7 @@ import { loadStoredResults, saveStoredResult, clearStoredResults } from '@/lib/d
 import { DocumentReadinessCheck } from '@/components/document-readiness/DocumentReadinessCheck'
 import { NameConsistencyCard } from '@/components/document-readiness/NameConsistencyCard'
 import { ReadinessSummary } from '@/components/document-readiness/ReadinessSummary'
+import { ApplicationPreparationForm } from '@/components/full-mode/ApplicationPreparationForm'
 import { FileCheck2, Trash2 } from 'lucide-react'
 
 type ActivePanel = 'schemes' | 'compare' | 'prep' | 'tracker' | 'csc' | 'helpline'
@@ -98,7 +99,7 @@ type TrackerItem = {
   borderColor: string
 }
 
-type ProfileData = {
+export type ProfileData = {
   fullName: string
   age: string
   state: string
@@ -119,6 +120,16 @@ type ProfileData = {
   girlChildAge: string
   qualification: string
   institutionName: string
+  // Application Preparation Form (scheme-specific sample application)
+  gender: string
+  district: string
+  mobileNumber: string
+  farmerCategory: string
+  landArea: string
+  surveyNumber: string
+  bankName: string
+  accountNumber: string
+  ifscCode: string
 }
 
 const allSchemes: SchemeItem[] = [
@@ -644,7 +655,9 @@ function FullModePageContent() {
     currentHouse: '', bplCard: '', familySize: '', rationCardType: '',
     businessType: '', businessAge: '', existingLoan: '',
     maritalStatus: '', lpgConnection: '', girlChildAge: '',
-    qualification: '', institutionName: ''
+    qualification: '', institutionName: '',
+    gender: '', district: '', mobileNumber: '', farmerCategory: '',
+    landArea: '', surveyNumber: '', bankName: '', accountNumber: '', ifscCode: ''
   })
 
   // Document Readiness Check state
@@ -766,26 +779,20 @@ function FullModePageContent() {
     setProfileData(prev => ({ ...prev, [field]: value }))
   }
 
-  const saveProfile = () => {
-    if (!profileData.fullName || !profileData.age || !profileData.state || !profileData.occupation) {
-      alert(lang === 'hi-IN' ? 'कृपया जारी रखने के लिए नाम, आयु, राज्य और व्यवसाय भरें।' : lang === 'mr-IN' ? 'कृपया सुरू ठेवण्यासाठी नाव, वय, राज्य आणि व्यवसाय भरा.' : 'Please fill Name, Age, State, and Occupation to continue.')
-      return
-    }
-    setHasProfile(true)
-    setShowProfileForm(false)
-  }
-
   const useDemoProfile = () => {
     setProfileData({
       fullName: 'Rajesh Patil', age: '45', state: 'Maharashtra',
       occupation: 'Farmer', income: '< ₹1.5L/year', land: '2 acres',
-      landOwnership: 'yes', aadhaarBankLinked: 'yes',
+      landOwnership: 'owned', aadhaarBankLinked: 'yes',
       currentHouse: 'kutcha', bplCard: 'yes', familySize: '4',
       rationCardType: 'BPL', businessType: '', businessAge: '',
       existingLoan: 'no', maritalStatus: 'married', lpgConnection: 'no',
-      girlChildAge: '', qualification: '', institutionName: ''
+      girlChildAge: '', qualification: '', institutionName: '',
+      gender: 'male', district: 'Pune', mobileNumber: '9876543210',
+      farmerCategory: 'small', landArea: '2', surveyNumber: '214/2A',
+      bankName: 'State Bank of India', accountNumber: '20394857612', ifscCode: 'SBIN0001234',
     })
-    setHasProfile(true)
+    setShowProfileForm(true)
   }
 
   const schemeCategory = getSchemeCategory(selectedScheme)
@@ -1740,7 +1747,22 @@ Place: ${profileData.state}`
             </div>
           )}
 
-          {activePanel === 'prep' && hasProfile && (
+          {activePanel === 'prep' && showProfileForm && (
+            <ApplicationPreparationForm
+              lang={lang}
+              schemeName={schemeName}
+              requiredDocuments={requiredDocs}
+              profileData={profileData}
+              onFieldChange={updateProfile}
+              onBack={() => setShowProfileForm(false)}
+              onSubmit={() => {
+                setHasProfile(true)
+                setShowProfileForm(false)
+              }}
+            />
+          )}
+
+          {activePanel === 'prep' && hasProfile && !showProfileForm && (
             <div className="max-w-[1100px] mx-auto">
               <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
                 <div>
