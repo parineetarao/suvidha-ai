@@ -4,6 +4,15 @@ import React, { Suspense, useState, useEffect, useCallback } from 'react'
 import Image from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { S, g, gf, type Lang } from '@/lib/strings'
+import type { DocumentType, DocumentReadinessResult, RequiredDocumentRef, NameComparison } from '@/lib/document-readiness/types'
+import { DR, drt } from '@/lib/document-readiness/translations'
+import { compareNames } from '@/lib/document-readiness/name-matching'
+import { computeReadinessScore } from '@/lib/document-readiness/readiness-score'
+import { loadStoredResults, saveStoredResult, clearStoredResults } from '@/lib/document-readiness/storage'
+import { DocumentReadinessCheck } from '@/components/document-readiness/DocumentReadinessCheck'
+import { NameConsistencyCard } from '@/components/document-readiness/NameConsistencyCard'
+import { ReadinessSummary } from '@/components/document-readiness/ReadinessSummary'
+import { FileCheck2, Trash2 } from 'lucide-react'
 
 type ActivePanel = 'schemes' | 'compare' | 'prep' | 'tracker' | 'csc' | 'helpline'
 type EligibilityStatus = 'eligible' | 'partial' | 'ineligible'
@@ -39,6 +48,7 @@ type SchemeItem = {
   documentsHindi: string[]
   documentsMr: string[]
   officialUrl: string
+  requiredDocuments: RequiredDocumentRef[]
 }
 
 function getSchemeName(scheme: SchemeItem, lang: Lang): string {
@@ -156,7 +166,12 @@ const allSchemes: SchemeItem[] = [
     documents: ['Aadhaar Card', 'Bank Passbook', 'Land Records (Khasra/Khatauni)', 'Mobile Number (Aadhaar linked)', 'Passport Photo (2 copies)'],
     documentsHindi: ['आधार कार्ड', 'बैंक पासबुक', 'ज़मीन के कागज़ (खसरा/खतौनी)', 'मोबाइल नंबर (आधार से लिंक)', 'पासपोर्ट फोटो (2 प्रतियां)'],
     documentsMr: ['आधार कार्ड', 'बँक पासबुक', 'जमिनीचे कागद (खसरा/खतावणी)', 'मोबाइल क्रमांक (आधार लिंक)', 'पासपोर्ट फोटो (2 प्रती)'],
-    officialUrl: 'https://pmkisan.gov.in'
+    officialUrl: 'https://pmkisan.gov.in',
+    requiredDocuments: [
+      { type: 'aadhaar', required: true, labelKey: 'aadhaar', reasonKey: 'identityProof' },
+      { type: 'bank_passbook', required: true, labelKey: 'bank_passbook', reasonKey: 'directBenefitTransfer' },
+      { type: 'land_record', required: true, labelKey: 'land_record', reasonKey: 'landOwnershipProof' },
+    ],
   },
   {
     id: 2,
@@ -202,7 +217,12 @@ const allSchemes: SchemeItem[] = [
     documents: ['Aadhaar Card', 'Bank Passbook', 'Land Records', 'Crop Sowing Certificate'],
     documentsHindi: ['आधार कार्ड', 'बैंक पासबुक', 'ज़मीन के कागज़', 'फसल बुआई प्रमाण पत्र'],
     documentsMr: ['आधार कार्ड', 'बँक पासबुक', 'जमिनीचे कागद', 'पीक पेरणी प्रमाणपत्र'],
-    officialUrl: 'https://pmfby.gov.in'
+    officialUrl: 'https://pmfby.gov.in',
+    requiredDocuments: [
+      { type: 'aadhaar', required: true, labelKey: 'aadhaar', reasonKey: 'identityProof' },
+      { type: 'bank_passbook', required: true, labelKey: 'bank_passbook', reasonKey: 'directBenefitTransfer' },
+      { type: 'land_record', required: true, labelKey: 'land_record', reasonKey: 'landOwnershipProof' },
+    ],
   },
   {
     id: 3,
@@ -248,7 +268,13 @@ const allSchemes: SchemeItem[] = [
     documents: ['Aadhaar Card', 'BPL Ration Card', 'Bank Passbook', 'Income Certificate', 'Passport Photo'],
     documentsHindi: ['आधार कार्ड', 'BPL राशन कार्ड', 'बैंक पासबुक', 'आय प्रमाण पत्र', 'पासपोर्ट फोटो'],
     documentsMr: ['आधार कार्ड', 'BPL रेशन कार्ड', 'बँक पासबुक', 'उत्पन्नाचा दाखला', 'पासपोर्ट फोटो'],
-    officialUrl: 'https://pmayg.nic.in'
+    officialUrl: 'https://pmayg.nic.in',
+    requiredDocuments: [
+      { type: 'aadhaar', required: true, labelKey: 'aadhaar', reasonKey: 'identityProof' },
+      { type: 'ration_card', required: true, labelKey: 'ration_card', reasonKey: 'householdProof' },
+      { type: 'income_certificate', required: true, labelKey: 'income_certificate', reasonKey: 'incomeProof' },
+      { type: 'bank_passbook', required: true, labelKey: 'bank_passbook', reasonKey: 'directBenefitTransfer' },
+    ],
   },
   {
     id: 4,
@@ -294,7 +320,11 @@ const allSchemes: SchemeItem[] = [
     documents: ['Aadhaar Card', 'Ration Card', 'Mobile Number'],
     documentsHindi: ['आधार कार्ड', 'राशन कार्ड', 'मोबाइल नंबर'],
     documentsMr: ['आधार कार्ड', 'रेशन कार्ड', 'मोबाइल क्रमांक'],
-    officialUrl: 'https://pmjay.gov.in'
+    officialUrl: 'https://pmjay.gov.in',
+    requiredDocuments: [
+      { type: 'aadhaar', required: true, labelKey: 'aadhaar', reasonKey: 'identityProof' },
+      { type: 'ration_card', required: true, labelKey: 'ration_card', reasonKey: 'householdProof' },
+    ],
   },
   {
     id: 5,
@@ -340,7 +370,12 @@ const allSchemes: SchemeItem[] = [
     documents: ['Aadhaar Card', 'PAN Card', 'Bank Passbook', 'Business Registration (if any)', 'Passport Photo'],
     documentsHindi: ['आधार कार्ड', 'पैन कार्ड', 'बैंक पासबुक', 'व्यापार पंजीकरण (यदि हो)', 'पासपोर्ट फोटो'],
     documentsMr: ['आधार कार्ड', 'पॅन कार्ड', 'बँक पासबुक', 'व्यवसाय नोंदणी (असल्यास)', 'पासपोर्ट फोटो'],
-    officialUrl: 'https://mudra.org.in'
+    officialUrl: 'https://mudra.org.in',
+    requiredDocuments: [
+      { type: 'aadhaar', required: true, labelKey: 'aadhaar', reasonKey: 'identityProof' },
+      { type: 'bank_passbook', required: true, labelKey: 'bank_passbook', reasonKey: 'directBenefitTransfer' },
+      { type: 'income_certificate', required: false, labelKey: 'income_certificate', reasonKey: 'incomeProof' },
+    ],
   },
   {
     id: 6,
@@ -386,7 +421,12 @@ const allSchemes: SchemeItem[] = [
     documents: ['Aadhaar Card', 'BPL Ration Card', 'Bank Passbook', 'Passport Photo'],
     documentsHindi: ['आधार कार्ड', 'BPL राशन कार्ड', 'बैंक पासबुक', 'पासपोर्ट फोटो'],
     documentsMr: ['आधार कार्ड', 'BPL रेशन कार्ड', 'बँक पासबुक', 'पासपोर्ट फोटो'],
-    officialUrl: 'https://pmuy.gov.in'
+    officialUrl: 'https://pmuy.gov.in',
+    requiredDocuments: [
+      { type: 'aadhaar', required: true, labelKey: 'aadhaar', reasonKey: 'identityProof' },
+      { type: 'ration_card', required: true, labelKey: 'ration_card', reasonKey: 'householdProof' },
+      { type: 'bank_passbook', required: true, labelKey: 'bank_passbook', reasonKey: 'directBenefitTransfer' },
+    ],
   },
   {
     id: 7,
@@ -429,7 +469,11 @@ const allSchemes: SchemeItem[] = [
     documents: ['Aadhaar Card', 'Educational Certificate', 'Passport Photo'],
     documentsHindi: ['आधार कार्ड', 'शैक्षणिक प्रमाण पत्र', 'पासपोर्ट फोटो'],
     documentsMr: ['आधार कार्ड', 'शैक्षणिक प्रमाणपत्र', 'पासपोर्ट फोटो'],
-    officialUrl: 'https://pmkvyofficial.org'
+    officialUrl: 'https://pmkvyofficial.org',
+    requiredDocuments: [
+      { type: 'aadhaar', required: true, labelKey: 'aadhaar', reasonKey: 'identityProof' },
+      { type: 'passport_photo', required: true, labelKey: 'passport_photo', reasonKey: 'photoRequirement' },
+    ],
   },
   {
     id: 8,
@@ -472,7 +516,12 @@ const allSchemes: SchemeItem[] = [
     documents: ['Girl Child Birth Certificate', 'Aadhaar (parent and child)', 'Bank Passbook'],
     documentsHindi: ['बेटी का जन्म प्रमाण पत्र', 'आधार (माता-पिता और बेटी)', 'बैंक पासबुक'],
     documentsMr: ['मुलीचे जन्म प्रमाणपत्र', 'आधार (पालक आणि मूल)', 'बँक पासबुक'],
-    officialUrl: 'https://www.indiapost.gov.in'
+    officialUrl: 'https://www.indiapost.gov.in',
+    requiredDocuments: [
+      { type: 'aadhaar', required: true, labelKey: 'aadhaar', reasonKey: 'identityProof' },
+      { type: 'bank_passbook', required: true, labelKey: 'bank_passbook', reasonKey: 'directBenefitTransfer' },
+      { type: 'domicile_certificate', required: false, labelKey: 'domicile_certificate', reasonKey: 'residenceProof' },
+    ],
   }
 ]
 
@@ -597,6 +646,49 @@ function FullModePageContent() {
     maritalStatus: '', lpgConnection: '', girlChildAge: '',
     qualification: '', institutionName: ''
   })
+
+  // Document Readiness Check state
+  const [docResults, setDocResults] = useState<Partial<Record<DocumentType, DocumentReadinessResult>>>({})
+  const [selectedDocType, setSelectedDocType] = useState<DocumentType | null>(null)
+  const [hasStoredDocData, setHasStoredDocData] = useState(false)
+
+  useEffect(() => {
+    const stored = loadStoredResults()
+    setHasStoredDocData(Object.keys(stored).length > 0)
+  }, [])
+
+  const requiredDocs: RequiredDocumentRef[] = selectedScheme.requiredDocuments
+  const activeDocType: DocumentType = selectedDocType ?? requiredDocs[0]?.type ?? 'aadhaar'
+  const activeDocRef = requiredDocs.find((d) => d.type === activeDocType)
+
+  const nameComparisons: NameComparison[] = requiredDocs
+    .map((ref) => docResults[ref.type])
+    .filter((r): r is DocumentReadinessResult => !!r && !!r.extractedName)
+    .map((r) => {
+      const cmp = compareNames(profileData.fullName, r.extractedName)
+      return { documentType: r.documentType, extractedName: r.extractedName ?? '', label: cmp.label, similarity: cmp.similarity }
+    })
+
+  const docReadinessScore = computeReadinessScore({ requiredDocs, results: docResults, nameComparisons })
+
+  const handleDocResult = (type: DocumentType, result: DocumentReadinessResult | null) => {
+    setDocResults((prev) => {
+      const next = { ...prev }
+      if (result) {
+        next[type] = result
+        saveStoredResult(result, docReadinessScore.score)
+      } else {
+        delete next[type]
+      }
+      return next
+    })
+  }
+
+  const clearDocReadinessData = () => {
+    setDocResults({})
+    clearStoredResults()
+    setHasStoredDocData(false)
+  }
 
   // URL param on mount
   useEffect(() => {
@@ -1645,6 +1737,105 @@ Place: ${profileData.state}`
               >
                 {g(S.full.useDemo, lang)}
               </button>
+            </div>
+          )}
+
+          {activePanel === 'prep' && hasProfile && (
+            <div className="max-w-[1100px] mx-auto">
+              <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
+                <div>
+                  <h2 className="flex items-center gap-2 text-[18px] font-bold text-[#1C1917]" style={{ fontFamily: 'var(--font-libre-baskerville)' }}>
+                    <FileCheck2 size={18} className="text-[#E8690B]" aria-hidden="true" />
+                    {drt(DR.full.tabTitle, lang)}
+                  </h2>
+                  <p className="text-[11px] text-[#78716C] mt-0.5">
+                    {drt(DR.full.selectedScheme, lang)}: <span className="font-semibold text-[#1C1917]">{schemeName}</span>
+                  </p>
+                </div>
+                <div className="flex flex-col items-end gap-1">
+                  <button
+                    type="button"
+                    onClick={clearDocReadinessData}
+                    className="flex items-center gap-1.5 text-[11px] font-bold text-[#78716C] border border-[#E7E0D8] rounded-[7px] px-3 py-2 hover:border-[#DC2626] hover:text-[#DC2626] transition-colors"
+                  >
+                    <Trash2 size={13} aria-hidden="true" />
+                    {drt(DR.common.clearData, lang)}
+                  </button>
+                  {hasStoredDocData && Object.keys(docResults).length === 0 && (
+                    <span className="text-[9.5px] text-[#A8A29E]">
+                      {lang === 'hi-IN' ? 'पिछली जाँच का डेटा मिला' : lang === 'mr-IN' ? 'मागील तपासणीचा डेटा सापडला' : 'Previous check data found on this device'}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-[#EFF6FF] border border-[#BFDBFE] rounded-[8px] px-3 py-2 mb-2">
+                <p className="text-[10.5px] text-[#1D4ED8] leading-[1.5]">{drt(DR.common.purposeStatement, lang)}</p>
+              </div>
+              <div className="bg-[#FFFBEB] border border-[#FDE68A] rounded-[8px] px-3 py-2 mb-4">
+                <p className="text-[10.5px] text-[#92400E] leading-[1.5]">{drt(DR.common.safetyNotice, lang)}</p>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-4">
+                {/* LEFT: required documents list */}
+                <div className="space-y-2">
+                  <div className="text-[10px] uppercase font-bold text-[#A8A29E] tracking-wide">{drt(DR.full.requiredDocuments, lang)}</div>
+                  {requiredDocs.map((ref) => {
+                    const docResult = docResults[ref.type]
+                    const isActive = ref.type === activeDocType
+                    const statusKey = docResult ? docResult.status : 'not_checked'
+                    const dotColor =
+                      docResult?.status === 'ready' ? '#1A6B3C' : docResult?.status === 'warning' ? '#D97706' : docResult?.status === 'unclear' ? '#78716C' : docResult?.status === 'error' ? '#DC2626' : '#C4BFBA'
+                    return (
+                      <button
+                        key={ref.type}
+                        type="button"
+                        onClick={() => setSelectedDocType(ref.type)}
+                        className={`w-full text-left rounded-[8px] border p-3 transition-colors ${isActive ? 'border-[#E8690B] bg-[#FFF8F1]' : 'border-[#E7E0D8] bg-white hover:border-[#E8690B]'}`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: dotColor }} aria-hidden="true" />
+                          <span className="text-[12.5px] font-semibold text-[#1C1917] flex-1">{drt(DR.documentTypes[ref.type], lang)}</span>
+                          {!ref.required && <span className="text-[8px] font-bold text-[#A8A29E] uppercase">{drt(DR.common.optional, lang)}</span>}
+                        </div>
+                        <div className="text-[9.5px] text-[#A8A29E] mt-1 ml-4">{drt(DR.status[statusKey], lang)} · {drt(DR.reasons[ref.reasonKey as keyof typeof DR.reasons], lang)}</div>
+                      </button>
+                    )
+                  })}
+                  <div className="pt-1">
+                    <ReadinessSummary lang={lang} score={docReadinessScore} compact />
+                  </div>
+                </div>
+
+                {/* RIGHT: selected document check + cross-doc name comparison */}
+                <div className="space-y-4">
+                  <div className="bg-white border border-[#E7E0D8] rounded-[10px] p-4">
+                    <h3 className="flex items-center gap-2 text-[14px] font-bold text-[#1C1917] mb-3" style={{ fontFamily: 'var(--font-libre-baskerville)' }}>
+                      {drt(DR.documentTypes[activeDocType], lang)}
+                      {activeDocRef && !activeDocRef.required && (
+                        <span className="text-[9px] font-bold text-[#A8A29E] uppercase border border-[#E7E0D8] rounded-full px-2 py-0.5">{drt(DR.common.optional, lang)}</span>
+                      )}
+                    </h3>
+                    <DocumentReadinessCheck
+                      key={activeDocType}
+                      lang={lang}
+                      documentType={activeDocType}
+                      displayLabel={drt(DR.documentTypes[activeDocType], lang)}
+                      expectedProfileName={profileData.fullName || undefined}
+                      onProfileNameProvided={(name) => updateProfile('fullName', name)}
+                      initialResult={docResults[activeDocType] ?? null}
+                      onResult={(result) => handleDocResult(activeDocType, result)}
+                      inputIdPrefix={`full-${activeDocType}`}
+                    />
+                  </div>
+
+                  <NameConsistencyCard lang={lang} profileName={profileData.fullName || '—'} comparisons={nameComparisons} onGoToDocument={(t) => setSelectedDocType(t)} />
+
+                  <ReadinessSummary lang={lang} score={docReadinessScore} />
+
+                  <p className="text-[10px] text-[#A8A29E] leading-[1.5]">{drt(DR.common.disclaimerNote, lang)}</p>
+                </div>
+              </div>
             </div>
           )}
 

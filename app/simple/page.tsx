@@ -3,6 +3,27 @@
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { ScanLine } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import type { DocumentReadinessResult, DocumentType, NameComparison } from '@/lib/document-readiness/types';
+import { DR, drt } from '@/lib/document-readiness/translations';
+import { compareNames } from '@/lib/document-readiness/name-matching';
+import { DocumentReadinessCheck } from '@/components/document-readiness/DocumentReadinessCheck';
+import { NameConsistencyCard } from '@/components/document-readiness/NameConsistencyCard';
+import { ReadinessSummary } from '@/components/document-readiness/ReadinessSummary';
+import type { ReadinessScoreOutput } from '@/lib/document-readiness/readiness-score';
+
+function mapSimpleDocIdToType(id: string): DocumentType {
+  switch (id) {
+    case 'aadhaar': return 'aadhaar';
+    case 'passbook': return 'bank_passbook';
+    case 'khasra': return 'land_record';
+    case 'photo': return 'passport_photo';
+    case 'ration': return 'ration_card';
+    case 'income': return 'income_certificate';
+    default: return 'other';
+  }
+}
 
 type ConversationStage = 'greeting' | 'waiting' | 'processing' | 'results_shown';
 type MessageType = 'bot' | 'user' | 'typing' | 'schemes' | 'prepPrompt' | 'docCheck';
@@ -886,6 +907,8 @@ function DocVisualCard({
   ui,
   resp,
   lang,
+  readinessResult,
+  onOpenCheck,
 }: {
   doc: DocumentItem;
   status: DocCheckStatus;
@@ -895,6 +918,8 @@ function DocVisualCard({
   ui: UiStringsBundle;
   resp: typeof botResponses[UiLang];
   lang: UiLang;
+  readinessResult?: DocumentReadinessResult;
+  onOpenCheck: (docId: string) => void;
 }) {
   const borderColor = status === 'yes' ? '#1A6B3C' : status === 'no' ? '#DC2626' : '#E7E0D8';
   const nameColor = status === 'yes' ? '#1A6B3C' : status === 'no' ? '#DC2626' : '#1C1917';
@@ -976,7 +1001,33 @@ function DocVisualCard({
           </div>
         )}
         {status === 'yes' && (
-          <div className="text-center py-1.5 text-[11px] text-[#15803D] font-bold bg-[#F0FDF4] border border-[#BBF7D0] rounded-md">{ui.readyStrip}</div>
+          <div className="space-y-1">
+            <div className="text-center py-1.5 text-[11px] text-[#15803D] font-bold bg-[#F0FDF4] border border-[#BBF7D0] rounded-md">{ui.readyStrip}</div>
+            {readinessResult ? (
+              <button
+                type="button"
+                onClick={() => onOpenCheck(doc.id)}
+                className="w-full flex items-center justify-center gap-1 py-1.5 text-[10px] font-bold rounded-md border"
+                style={{
+                  color: readinessResult.status === 'ready' ? '#15803D' : readinessResult.status === 'unclear' ? '#78716C' : '#B45309',
+                  borderColor: readinessResult.status === 'ready' ? '#BBF7D0' : readinessResult.status === 'unclear' ? '#E7E0D8' : '#FDE68A',
+                  background: readinessResult.status === 'ready' ? '#F0FDF4' : readinessResult.status === 'unclear' ? '#F4F1EC' : '#FFFBEB',
+                }}
+              >
+                <ScanLine size={11} aria-hidden="true" />
+                {drt(DR.status[readinessResult.status], lang)}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onOpenCheck(doc.id)}
+                className="w-full flex items-center justify-center gap-1 py-1.5 text-[10px] font-bold rounded-md border border-[#FED7AA] bg-[#FFF8F1] text-[#C2570A] hover:bg-[#FFEEDC]"
+              >
+                <ScanLine size={11} aria-hidden="true" />
+                {drt(DR.common.checkDocument, lang)}
+              </button>
+            )}
+          </div>
         )}
         {status === 'no' && (
           <button type="button" className="w-full text-center py-1.5 text-[11px] text-[#DC2626] font-bold bg-[#FEF2F2] border border-[#FECACA] rounded-md cursor-pointer" onClick={handleWhereClick}>
@@ -1028,6 +1079,44 @@ function DocCheckCard({
   const scriptText =
     visitScripts[category]?.[scriptLang] ?? visitScripts.farmer.hindi;
 
+  // Document Readiness Check (OCR-based) — layered on top of the existing Yes/No checklist above.
+  const [readinessResults, setReadinessResults] = useState<Partial<Record<string, DocumentReadinessResult>>>({});
+  const [openDocId, setOpenDocId] = useState<string | null>(null);
+  const [userName, setUserName] = useState('');
+
+  const openDoc = docs.find((d) => d.id === openDocId) ?? null;
+
+  const nameComparisons: NameComparison[] = docs
+    .map((d) => ({ doc: d, result: readinessResults[d.id] }))
+    .filter((x): x is { doc: DocumentItem; result: DocumentReadinessResult } => !!x.result && !!x.result.extractedName)
+    .map(({ doc, result }) => {
+      const cmp = compareNames(userName, result.extractedName);
+      return { documentType: mapSimpleDocIdToType(doc.id), extractedName: result.extractedName ?? '', label: cmp.label, similarity: cmp.similarity };
+    });
+
+  const checkedDocsForScore = docs.filter((d) => docCheckState[d.id] === 'yes');
+  const anyReadinessChecked = checkedDocsForScore.some((d) => readinessResults[d.id]);
+
+  const simpleScore: ReadinessScoreOutput = (() => {
+    let score = 100;
+    let ready = 0, attention = 0, checkedN = 0;
+    checkedDocsForScore.forEach((d) => {
+      const r = readinessResults[d.id];
+      if (!r) { score -= 20; return; }
+      checkedN++;
+      if (r.status === 'ready') { ready++; return; }
+      attention++;
+      if (r.status === 'unclear' || r.status === 'error') { score -= 10; return; }
+      r.issues.forEach((issue) => {
+        score -= issue.code === 'doc_type_mismatch' ? 20 : issue.code === 'certificate_outdated' ? 15 : issue.severity === 'critical' ? 10 : 5;
+      });
+    });
+    score -= nameComparisons.filter((c) => c.label === 'mismatch').length * 15;
+    score = Math.max(0, Math.min(100, Math.round(score)));
+    const band: ReadinessScoreOutput['band'] = score >= 80 ? 'ready' : score >= 55 ? 'review' : 'fix';
+    return { score, band, documentsRequired: checkedDocsForScore.length, documentsChecked: checkedN, documentsReady: ready, documentsNeedingAttention: attention };
+  })();
+
   return (
     <div className="self-start w-full max-w-[680px]">
       <div className="bg-[#1A6B3C] rounded-t-xl py-3 px-4 flex items-center gap-2.5">
@@ -1048,11 +1137,16 @@ function DocCheckCard({
       </div>
 
       <div className="bg-white rounded-b-xl border-[1.5px] border-t-0 border-[#E7E0D8] p-4">
-        <div className="bg-[#FFFBEB] border border-[#FDE68A] rounded-[7px] py-2 px-2.5 flex gap-1.5 items-start mb-3.5">
+        <div className="bg-[#FFFBEB] border border-[#FDE68A] rounded-[7px] py-2 px-2.5 flex gap-1.5 items-start mb-2.5">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2" className="shrink-0 mt-0.5">
             <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3.05h16.94a2 2 0 0 0 1.71-3.05L13.71 3.86a2 2 0 0 0-3.42 0z" />
           </svg>
           <p className="text-[11px] text-[#92400E] leading-[1.5]">{ui.warningNote}</p>
+        </div>
+
+        <div className="bg-[#EFF6FF] border border-[#BFDBFE] rounded-[7px] py-2 px-2.5 mb-3.5">
+          <p className="text-[10px] text-[#1D4ED8] leading-[1.5]">{drt(DR.common.purposeStatement, lang)}</p>
+          <p className="text-[10px] text-[#1D4ED8] leading-[1.5] mt-1 opacity-80">{drt(DR.common.safetyNotice, lang)}</p>
         </div>
 
         <div className="doc-scroll flex gap-2.5 overflow-x-auto pb-2" style={{ WebkitOverflowScrolling: 'touch' }}>
@@ -1067,9 +1161,47 @@ function DocCheckCard({
               ui={ui}
               resp={resp}
               lang={lang}
+              readinessResult={readinessResults[doc.id]}
+              onOpenCheck={setOpenDocId}
             />
           ))}
         </div>
+
+        {anyReadinessChecked && (
+          <div className="space-y-2.5 mt-3">
+            <NameConsistencyCard lang={lang} profileName={userName || '—'} comparisons={nameComparisons} compact />
+            <ReadinessSummary lang={lang} score={simpleScore} compact />
+          </div>
+        )}
+
+        <Dialog open={!!openDocId} onOpenChange={(open) => !open && setOpenDocId(null)}>
+          <DialogContent className="max-w-[420px] max-h-[85vh] overflow-y-auto bg-white p-5">
+            <DialogHeader>
+              <DialogTitle className="sr-only">{openDoc ? getDocName(openDoc, lang) : drt(DR.common.title, lang)}</DialogTitle>
+            </DialogHeader>
+            {openDoc && (
+              <DocumentReadinessCheck
+                key={openDoc.id}
+                lang={lang}
+                documentType={mapSimpleDocIdToType(openDoc.id)}
+                displayLabel={getDocName(openDoc, lang)}
+                expectedProfileName={userName || undefined}
+                onProfileNameProvided={setUserName}
+                compact
+                initialResult={readinessResults[openDoc.id] ?? null}
+                onResult={(result) => {
+                  setReadinessResults((prev) => {
+                    const next = { ...prev };
+                    if (result) next[openDoc.id] = result;
+                    else delete next[openDoc.id];
+                    return next;
+                  });
+                }}
+                inputIdPrefix={`simple-${openDoc.id}`}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
 
         {allAnswered && (
           <>
