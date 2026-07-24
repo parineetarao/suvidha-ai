@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, Mic, Search, CheckCircle2, AlertCircle, FileText, MessageSquare, ArrowRight } from 'lucide-react';
 import { useState } from 'react';
+import { S, g, gf, type Lang } from '@/lib/strings';
 
 function CitizenOrbitalLogoMark({ size }: { size: number }) {
   const radius = Math.round((size * 8) / 34);
@@ -35,10 +36,12 @@ function SuvidhaWordmark({
   darkBackground,
   titleSize,
   subtitleSize,
+  tagline,
 }: {
   darkBackground: boolean;
   titleSize: number;
   subtitleSize: number;
+  tagline: string;
 }) {
   return (
     <div>
@@ -55,7 +58,7 @@ function SuvidhaWordmark({
           letterSpacing: '0.04em',
         }}
       >
-        Government Scheme Finder
+        {tagline}
       </div>
     </div>
   );
@@ -63,28 +66,32 @@ function SuvidhaWordmark({
 
 export default function SuvidhaAILanding() {
   const router = useRouter();
-  const [selectedLanguage, setSelectedLanguage] = useState('English');
+  const [lang, setLang] = useState<Lang>('en-IN');
   const [searchInput, setSearchInput] = useState('');
 
-  const languages = ['English', 'हिंदी', 'मराठी', 'বাংলা', 'తెలుగు', 'தமிழ்', 'ગુજરાતી', 'ಕನ್ನಡ', 'മലയാളം', 'ਪੰਜਾਬੀ', 'ଓଡ଼ିଆ', 'অসমীয়া'];
+  const languages: { code: Lang; label: string }[] = [
+    { code: 'en-IN', label: 'English' },
+    { code: 'hi-IN', label: 'हिंदी' },
+    { code: 'mr-IN', label: 'मराठी' },
+  ];
 
   return (
     <div className="w-full bg-white overflow-hidden">
       {/* SECTION 1: NAVIGATION BAR */}
-      <nav className="sticky top-0 z-100 h-[62px] bg-white border-b-2 border-[#E8690B] flex items-center px-12 justify-between">
+      <nav className="sticky top-0 z-100 h-[62px] bg-white border-b-2 border-[#E8690B] flex items-center px-4 sm:px-6 lg:px-10 xl:px-5 sm:px-8 lg:px-12 justify-between gap-3">
         {/* Left: Logo */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
           <CitizenOrbitalLogoMark size={34} />
-          <SuvidhaWordmark darkBackground={false} titleSize={17} subtitleSize={9} />
+          <SuvidhaWordmark darkBackground={false} titleSize={17} subtitleSize={9} tagline={g(S.landing.tagline, lang)} />
         </div>
 
         {/* Center: Nav Links */}
-        <div className="flex items-center gap-8">
-          {['Schemes', 'How it Works', 'About', 'Help'].map((link) => (
+        <div className="hidden md:flex items-center gap-5 lg:gap-8">
+          {[g(S.landing.navSchemes, lang), g(S.landing.navHow, lang), g(S.landing.navAbout, lang), g(S.landing.navHelp, lang)].map((link) => (
             <a
               key={link}
               href="#"
-              className="text-[12px] font-semibold text-[#57534E] hover:text-[#E8690B] hover:border-b-2 hover:border-[#E8690B] pb-1 transition-all"
+              className="text-[12px] font-semibold text-[#57534E] hover:text-[#E8690B] hover:border-b-2 hover:border-[#E8690B] pb-1 transition-all whitespace-nowrap"
             >
               {link}
             </a>
@@ -92,56 +99,64 @@ export default function SuvidhaAILanding() {
         </div>
 
         {/* Right: Language & Login */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
           <select
-            value={selectedLanguage}
-            onChange={(e) => setSelectedLanguage(e.target.value)}
-            className="bg-[#FAF7F2] border border-[#E7E0D8] rounded-[5px] px-3 py-2 text-[12px] text-[#57534E] cursor-pointer"
+            value={lang}
+            onChange={(e) => setLang(e.target.value as Lang)}
+            className="bg-[#FAF7F2] border border-[#E7E0D8] rounded-[5px] px-2 sm:px-3 py-2 text-[12px] text-[#57534E] cursor-pointer"
           >
-            {languages.map((lang) => (
-              <option key={lang} value={lang}>
-                {lang}
+            {languages.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.label}
               </option>
             ))}
           </select>
-          <button className="bg-[#1A6B3C] text-white text-[12px] rounded-[5px] px-[18px] py-2 hover:bg-[#155032] transition-colors">
-            Login
+          <button className="bg-[#1A6B3C] text-white text-[12px] rounded-[5px] px-3 sm:px-[18px] py-2 hover:bg-[#155032] transition-colors whitespace-nowrap">
+            {g(S.landing.login, lang)}
           </button>
         </div>
       </nav>
 
       {/* SECTION 2: HERO */}
-      <section className="relative w-full bg-white min-h-[580px] px-12 py-14 overflow-hidden">
-        {/* Decorative circle background */}
-        <div className="absolute top-0 left-0 w-[600px] h-[600px] rounded-full bg-[#FFF3E8] opacity-30 -translate-x-1/2 -translate-y-1/2 pointer-events-none"></div>
+      <section className="relative w-full bg-white min-h-[620px] lg:min-h-[700px] px-5 sm:px-8 lg:px-16 xl:px-24 py-14 lg:py-20 overflow-hidden">
+        {/* Background artwork */}
+        <div className="absolute inset-0 z-0 pointer-events-none">
+          <Image src="/images/hero-background.png" alt="" fill priority className="object-cover object-center" />
+          <div className="absolute inset-0 bg-white/45"></div>
+        </div>
 
-        <div className="relative z-10 grid grid-cols-[1fr_460px] gap-12 items-center max-w-7xl mx-auto">
+        <div className="relative z-10 grid grid-cols-1 lg:grid-cols-[1fr_520px] xl:grid-cols-[1fr_580px] gap-10 lg:gap-16 xl:gap-24 items-center max-w-[1600px] mx-auto">
           {/* LEFT SIDE */}
           <div>
             {/* Badge */}
             <div className="inline-flex items-center gap-2 bg-[#F0FDF4] border border-[#BBF7D0] rounded-[5px] px-3.5 py-1.5 mb-6">
               <div className="w-[5px] h-[5px] rounded-full bg-[#1A6B3C]" style={{ animation: 'pulse-dot 2s infinite' }}></div>
-              <span className="text-[10px] font-bold text-[#1A6B3C] uppercase tracking-wider">Accurate</span>
+              <span className="text-[10px] font-bold text-[#1A6B3C] uppercase tracking-wider">{g(S.landing.badgeAccurate, lang)}</span>
               <span className="text-[#A8D5B5] mx-2">·</span>
-              <span className="text-[10px] font-bold text-[#1A6B3C] uppercase tracking-wider">Free</span>
+              <span className="text-[10px] font-bold text-[#1A6B3C] uppercase tracking-wider">{g(S.landing.badgeFree, lang)}</span>
               <span className="text-[#A8D5B5] mx-2">·</span>
-              <span className="text-[10px] font-bold text-[#1A6B3C] uppercase tracking-wider">In your language</span>
+              <span className="text-[10px] font-bold text-[#1A6B3C] uppercase tracking-wider">{g(S.landing.badgeLanguage, lang)}</span>
             </div>
 
             {/* Headline */}
-            <h1 className="max-w-[460px]" style={{ fontFamily: 'var(--font-libre-baskerville)' }}>
-              <div className="text-[50px] font-bold italic text-[#E8690B] leading-tight">सुविधा सबके लिए।</div>
-              <div className="text-[28px] text-[#57534E] mt-1">Welfare for all.</div>
+            <h1 className="max-w-[560px]" style={{ fontFamily: 'var(--font-libre-baskerville)' }}>
+              <div
+                className="text-[40px] sm:text-[48px] lg:text-[52px] xl:text-[58px] font-bold italic leading-tight bg-clip-text text-transparent"
+                style={{ backgroundImage: 'linear-gradient(90deg, #E8690B 0%, #EF8A1F 30%, #6B9B4F 65%, #1A6B3C 100%)' }}
+              >
+                {g(S.landing.headlineHi, lang)}
+              </div>
+              <div className="text-[22px] sm:text-[26px] lg:text-[28px] text-[#57534E] mt-2">{g(S.landing.headlineEn, lang)}</div>
             </h1>
 
             {/* Subline */}
-            <p className="text-[14px] text-[#57534E] leading-[1.7] max-w-[400px] mb-6 mt-4">
-              Tell us your situation in simple words — in any Indian language. We match you to every scheme you qualify for and show you exactly how to claim it.
+            <p className="text-[14px] text-[#57534E] leading-[1.7] max-w-[440px] mb-6 mt-5">
+              {g(S.landing.subline, lang)}
             </p>
 
             {/* Search Box */}
-            <div className="max-w-[500px] bg-[#FAF7F2] border-2 border-[#E7E0D8] rounded-[12px] p-4 mb-6 focus-within:border-[#E8690B] focus-within:bg-white transition-all">
-              <div className="flex gap-2 items-stretch">
+            <div className="max-w-[540px] bg-[#FAF7F2]/95 backdrop-blur-sm border-2 border-[#E7E0D8] rounded-[12px] p-4 mb-6 focus-within:border-[#E8690B] focus-within:bg-white transition-all">
+              <div className="flex flex-col sm:flex-row gap-2 items-stretch">
                 <textarea
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
@@ -153,7 +168,7 @@ export default function SuvidhaAILanding() {
                       }
                     }
                   }}
-                  placeholder="मैं 45 साल का किसान हूं... / I am a 60-year-old widow..."
+                  placeholder={g(S.landing.searchPlaceholder, lang)}
                   className="flex-1 h-14 text-[15px] bg-transparent resize-none placeholder-[#A8A29E] outline-none"
                   style={{ fontFamily: 'var(--font-mukta)' }}
                 />
@@ -166,17 +181,17 @@ export default function SuvidhaAILanding() {
                     }
                   }}
                 >
-                  Find Schemes →
+                  {g(S.landing.findSchemes, lang)}
                 </button>
               </div>
             </div>
 
             {/* Suggestion Chips */}
-            <div className="flex flex-wrap gap-2 max-w-[500px] mb-6">
-              {['Farmer', 'Senior Citizen', 'Single Woman', 'Student', 'Daily Wage Worker', 'Need Housing'].map((chip) => (
+            <div className="flex flex-wrap gap-2 max-w-[540px] mb-6">
+              {[g(S.landing.chipFarmer, lang), g(S.landing.chipSenior, lang), g(S.landing.chipWoman, lang), g(S.landing.chipStudent, lang), g(S.landing.chipWage, lang), g(S.landing.chipHousing, lang)].map((chip) => (
                 <button
                   key={chip}
-                  className="text-[11px] font-semibold px-[13px] py-[5px] rounded border border-[#E7E0D8] bg-white text-[#57534E] hover:border-[#E8690B] hover:text-[#E8690B] transition-colors"
+                  className="text-[11px] font-semibold px-[13px] py-[5px] rounded border border-[#E7E0D8] bg-white/90 text-[#57534E] hover:border-[#E8690B] hover:text-[#E8690B] transition-colors"
                 >
                   {chip}
                 </button>
@@ -184,18 +199,18 @@ export default function SuvidhaAILanding() {
             </div>
 
             {/* Mic Button */}
-            <button className="bg-[#F0FDF4] border-[1.5px] border-[#BBF7D0] rounded-full px-[22px] py-[10px] flex items-center gap-2 hover:bg-[#E8F5E9] transition-colors mb-6">
+            <button className="bg-[#F0FDF4]/95 border-[1.5px] border-[#BBF7D0] rounded-full px-[22px] py-[10px] flex items-center gap-2 hover:bg-[#E8F5E9] transition-colors mb-6">
               <Mic size={15} className="text-[#1A6B3C]" />
-              <span className="text-[13px] font-semibold text-[#1A6B3C]">Speak in your language</span>
+              <span className="text-[13px] font-semibold text-[#1A6B3C]">{g(S.landing.speakLang, lang)}</span>
             </button>
-            <span className="text-[11px] text-[#A8A29E] block mb-6">Hindi · English · Marathi + 9 more</span>
+            <span className="text-[11px] text-[#A8A29E] block mb-6">{g(S.landing.langList, lang)}</span>
 
             {/* Trust Signals Row */}
-            <div className="flex flex-wrap gap-5 pt-4 mt-5 border-t border-[#F0EBE4] max-w-[500px]">
+            <div className="flex flex-wrap gap-5 pt-4 mt-5 border-t border-[#F0EBE4] max-w-[540px]">
               {[
-                { text: '500+ schemes covered' },
-                { text: 'Central and state governments' },
-                { text: 'Updated from official sources' },
+                { text: g(S.landing.trust1, lang) },
+                { text: g(S.landing.trust2, lang) },
+                { text: g(S.landing.trust3, lang) },
               ].map((item, idx) => (
                 <div key={idx} className="flex items-center gap-1.5">
                   <div className="w-3.5 h-3.5 rounded-full bg-[#1A6B3C] flex items-center justify-center flex-shrink-0">
@@ -210,6 +225,7 @@ export default function SuvidhaAILanding() {
           </div>
 
           {/* RIGHT SIDE: ORBITAL ANIMATION */}
+          <div className="hidden lg:flex items-center justify-center xl:scale-105 2xl:scale-110">
           <div className="w-[520px] h-[520px] relative flex-shrink-0">
             {/* Static SVG Rings */}
             <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 520 520" fill="none">
@@ -240,10 +256,10 @@ export default function SuvidhaAILanding() {
                 </svg>
               </div>
               <div className="text-[10px] font-bold text-[#1C1917]" style={{ fontFamily: 'var(--font-mukta)' }}>
-                The Citizen
+                {g(S.landing.citizenCenter, lang)}
               </div>
               <div className="text-[8px] text-[#A8A29E]" style={{ fontFamily: 'var(--font-mukta)' }}>
-                You are at the center
+                {g(S.landing.citizenSub, lang)}
               </div>
             </div>
 
@@ -386,6 +402,7 @@ export default function SuvidhaAILanding() {
               </div>
             </div>
           </div>
+          </div>
         </div>
       </section>
 
@@ -397,13 +414,13 @@ export default function SuvidhaAILanding() {
       </div>
 
       {/* SECTION 4: STATS STRIP */}
-      <section className="bg-white border-b border-[#E7E0D8] px-12 py-3.5">
+      <section className="bg-white border-b border-[#E7E0D8] px-5 sm:px-8 lg:px-12 py-3.5">
         <div className="max-w-7xl mx-auto flex justify-center items-center gap-9 flex-wrap">
           {[
-            { number: '500+', label: 'Government schemes' },
-            { number: '12', label: 'Indian languages' },
-            { number: '3 min', label: 'Average search time' },
-            { number: 'Free', label: 'For every citizen' },
+            { number: '500+', label: g(S.landing.statSchemes, lang) },
+            { number: '12', label: g(S.landing.statLanguages, lang) },
+            { number: g(S.landing.statTimeNum, lang), label: g(S.landing.statTime, lang) },
+            { number: g(S.landing.statFreeNum, lang), label: g(S.landing.statFree, lang) },
           ].map((stat, idx) => (
             <div key={idx} className="flex items-center gap-3">
               <div className="text-center">
@@ -421,53 +438,53 @@ export default function SuvidhaAILanding() {
       </section>
 
       {/* SECTION 5: DUAL MODE */}
-      <section className="bg-white border-y border-[#E7E0D8] px-12 py-[68px]">
+      <section className="bg-white border-y border-[#E7E0D8] px-5 sm:px-8 lg:px-12 py-[68px]">
         <div className="max-w-7xl mx-auto">
           {/* Header */}
           <div className="text-center mb-10">
             <div className="flex items-center justify-center gap-5 mb-4">
               <div className="h-px w-5 bg-[#E8690B]"></div>
               <span className="text-[10px] uppercase font-bold text-[#E8690B] tracking-widest" style={{ fontFamily: 'var(--font-mukta)' }}>
-                Two ways to use SuvidhaAI
+                {g(S.landing.dualModeTag, lang)}
               </span>
               <div className="h-px w-5 bg-[#E8690B]"></div>
             </div>
             <h2 className="text-[30px] font-bold text-center" style={{ fontFamily: 'var(--font-libre-baskerville)' }}>
-              Choose how you want to search
+              {g(S.landing.dualModeHeading, lang)}
             </h2>
             <p className="text-[14px] text-[#57534E] max-w-[540px] mx-auto mt-3">
-              One platform for every citizen — simple voice guidance for rural users, complete application tools for family helpers and CSC operators.
+              {g(S.landing.dualModeSub, lang)}
             </p>
           </div>
 
           {/* Cards */}
-          <div className="grid grid-cols-2 gap-5 mt-10">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-10">
             {/* Simple Mode Card */}
             <div className="border-[1.5px] border-[#E7E0D8] rounded-[12px] overflow-hidden cursor-pointer hover:border-[#E8690B] hover:shadow-lg hover:-translate-y-[3px] transition-all bg-[#FAF7F2]">
               {/* Image Area */}
               <div className="h-[280px] relative overflow-hidden flex items-center justify-center">
                 <Image src="/images/mode-simple.avif" alt="Simple Mode" fill sizes="(max-width: 768px) 100vw, 50vw" className="object-cover" />
                 <div className="absolute top-0 left-0 z-10 bg-black/35 text-white text-[9px] rounded-[4px] px-2 py-1 m-2.5">
-                  Simple Mode · सरल मोड
+                  {g(S.landing.simpleModeBadge, lang)}
                 </div>
               </div>
 
               {/* Body */}
               <div className="bg-white p-5">
                 <h3 className="text-[17px] font-bold text-[#1C1917] mb-2" style={{ fontFamily: 'var(--font-libre-baskerville)' }}>
-                  Simple Mode — For Citizens Directly
+                  {g(S.landing.simpleModeTitle, lang)}
                 </h3>
                 <p className="text-[12px] text-[#57534E] mb-4">
-                  Voice-first, Hindi and Marathi, results spoken aloud. Designed for farmers, senior citizens, and rural users — minimal text, maximum clarity.
+                  {g(S.landing.simpleModeDesc, lang)}
                 </p>
 
                 {/* Features */}
                 <div className="space-y-2 mb-4">
                   {[
-                    'Speak your situation — no typing needed',
-                    'Results read aloud in Hindi or Marathi',
-                    'One-tap WhatsApp share and helpline call',
-                    'No login or registration needed',
+                    g(S.landing.simpleFeat1, lang),
+                    g(S.landing.simpleFeat2, lang),
+                    g(S.landing.simpleFeat3, lang),
+                    g(S.landing.simpleFeat4, lang),
                   ].map((feature) => (
                     <div key={feature} className="flex items-start gap-2">
                       <CheckCircle2 size={16} className="text-[#1A6B3C] flex-shrink-0 mt-0.5" />
@@ -479,7 +496,7 @@ export default function SuvidhaAILanding() {
                 {/* Button */}
                 <Link href="/simple">
                   <button className="w-full bg-[#E8690B] text-white text-[13px] font-bold rounded-[7px] py-3 hover:bg-[#D05B09] transition-colors">
-                    Use Simple Mode — बोलकर खोजें
+                    {g(S.landing.useSimpleMode, lang)}
                   </button>
                 </Link>
               </div>
@@ -491,26 +508,26 @@ export default function SuvidhaAILanding() {
               <div className="h-[280px] relative overflow-hidden flex items-center justify-center">
                 <Image src="/images/mode-full.jpg" alt="Full Mode" fill sizes="(max-width: 768px) 100vw, 50vw" className="object-cover" />
                 <div className="absolute top-0 left-0 z-10 bg-black/35 text-white text-[9px] rounded-[4px] px-2 py-1 m-2.5">
-                  Full Mode · पूर्ण सुविधा
+                  {g(S.landing.fullModeBadge, lang)}
                 </div>
               </div>
 
               {/* Body */}
               <div className="bg-white p-5">
                 <h3 className="text-[17px] font-bold text-[#1C1917] mb-2" style={{ fontFamily: 'var(--font-libre-baskerville)' }}>
-                  Full Mode — For Helpers & CSC Operators
+                  {g(S.landing.fullModeTitle, lang)}
                 </h3>
                 <p className="text-[12px] text-[#57534E] mb-4">
-                  Complete eligibility analysis, rejection prevention, pre-filled application documents, and status tracking for educated family members and government operators.
+                  {g(S.landing.fullModeDesc, lang)}
                 </p>
 
                 {/* Features */}
                 <div className="space-y-2 mb-4">
                   {[
-                    'Detailed eligibility check per scheme',
-                    'Rejection prevention warnings',
-                    'Printable pre-filled application summary',
-                    'Application status tracker in profile',
+                    g(S.landing.fullFeat1, lang),
+                    g(S.landing.fullFeat2, lang),
+                    g(S.landing.fullFeat3, lang),
+                    g(S.landing.fullFeat4, lang),
                   ].map((feature) => (
                     <div key={feature} className="flex items-start gap-2">
                       <CheckCircle2 size={16} className="text-[#0D47A1] flex-shrink-0 mt-0.5" />
@@ -522,7 +539,7 @@ export default function SuvidhaAILanding() {
                 {/* Button */}
                 <Link href="/full">
                   <button className="w-full bg-[#E8690B] text-white text-[13px] font-bold rounded-[7px] py-3 hover:bg-[#D05B09] transition-colors">
-                    Use Full Mode — पूर्ण सुविधा
+                    {g(S.landing.useFullMode, lang)}
                   </button>
                 </Link>
               </div>
@@ -532,31 +549,31 @@ export default function SuvidhaAILanding() {
       </section>
 
       {/* SECTION 6: PROBLEM STATEMENT */}
-      <section className="bg-[#FDF6EE] border-t-[3px] border-b-[3px] border-[#E8690B] px-12 py-16">
+      <section className="bg-[#FDF6EE] border-t-[3px] border-b-[3px] border-[#E8690B] px-5 sm:px-8 lg:px-12 py-16">
         <div className="max-w-7xl mx-auto">
           {/* Header */}
           <div className="text-center mb-11">
             <span className="text-[10px] uppercase font-bold text-[#E8690B] tracking-widest" style={{ fontFamily: 'var(--font-mukta)' }}>
-              The real problem
+              {g(S.landing.problemTag, lang)}
             </span>
             <h2 className="text-[30px] font-bold mt-2" style={{ fontFamily: 'var(--font-libre-baskerville)' }}>
-              ₹12 lakh crore in welfare. Most of it unclaimed.
+              {g(S.landing.problemHeading, lang)}
             </h2>
             <p className="text-[14px] text-[#57534E] max-w-[540px] mx-auto mt-3">
-              India allocates more per citizen than most developing nations. The problem is not the budget — it is the gap between schemes existing and citizens actually receiving them.
+              {g(S.landing.problemSub, lang)}
             </p>
           </div>
 
           {/* Content Grid */}
-          <div className="grid grid-cols-2 gap-12">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12">
             {/* Left Column: Stats */}
             <div>
               <div className="grid grid-cols-2 gap-3 mb-4">
                 {[
-                  { number: '67%', label: 'Eligible citizens who never apply', badge: 'Awareness gap', source: 'PMGSY Impact Assessment' },
-                  { number: '23%', label: 'Find government digital portals too difficult to use', badge: 'Usability gap', source: 'IAMAI India Report 2024' },
-                  { number: '57%', label: 'Prefer Indic languages — most portals are English only', badge: 'Language gap', source: 'KANTAR Report 2024' },
-                  { number: '40%', label: 'Applications rejected due to missing or incorrect documents', badge: 'Guidance gap', source: 'CSC Annual Report' },
+                  { number: '67%', label: g(S.landing.statAwareness, lang), badge: g(S.landing.badgeAwareness, lang), source: 'PMGSY Impact Assessment' },
+                  { number: '23%', label: g(S.landing.statUsability, lang), badge: g(S.landing.badgeUsability, lang), source: 'IAMAI India Report 2024' },
+                  { number: '57%', label: g(S.landing.statLanguage, lang), badge: g(S.landing.badgeLanguageGap, lang), source: 'KANTAR Report 2024' },
+                  { number: '40%', label: g(S.landing.statGuidance, lang), badge: g(S.landing.badgeGuidance, lang), source: 'CSC Annual Report' },
                 ].map((stat, idx) => (
                   <div key={idx} className="bg-white border border-[#E7E0D8] rounded-[10px] p-5 border-t-[3px] border-t-[#E8690B]">
                     <div className="text-[36px] font-bold text-[#E8690B] mb-1" style={{ fontFamily: 'var(--font-libre-baskerville)' }}>
@@ -572,11 +589,11 @@ export default function SuvidhaAILanding() {
               </div>
 
               {/* Barrier Cards */}
-              <div className="grid grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 {[
-                  { number: '1 in 4', title: 'Cannot navigate English interfaces', desc: 'Most portals require English literacy to find basic schemes' },
-                  { number: '0', title: 'Portals that speak results in Hindi', desc: '140M Indians use voice daily — no portal supports it' },
-                  { number: '68%', title: 'Rural users prefer voice interfaces', desc: 'The solution exists — it just hasn\'t been applied to welfare' },
+                  { number: '1 in 4', title: g(S.landing.barrier1Title, lang), desc: g(S.landing.barrier1Desc, lang) },
+                  { number: '0', title: g(S.landing.barrier2Title, lang), desc: g(S.landing.barrier2Desc, lang) },
+                  { number: '68%', title: g(S.landing.barrier3Title, lang), desc: g(S.landing.barrier3Desc, lang) },
                 ].map((barrier, idx) => (
                   <div key={idx} className="bg-white border border-[#E7E0D8] rounded-lg p-3.5 text-center">
                     <div
@@ -596,17 +613,17 @@ export default function SuvidhaAILanding() {
             <div>
               {/* Chart Card */}
               <div className="bg-white border border-[#E7E0D8] rounded-[10px] p-5 mb-4">
-                <h3 className="text-[12px] font-bold text-[#1C1917] mb-1">Who do existing welfare portals actually reach?</h3>
-                <p className="text-[10px] text-[#A8A29E] mb-4">Active monthly users as % of eligible population · India 2024</p>
+                <h3 className="text-[12px] font-bold text-[#1C1917] mb-1">{g(S.landing.chartTitle, lang)}</h3>
+                <p className="text-[10px] text-[#A8A29E] mb-4">{g(S.landing.chartSub, lang)}</p>
 
                 {/* Chart Bars */}
                 <div className="space-y-3">
                   {[
-                    { label: 'Urban educated users', percentage: 42, color: '#E8690B' },
-                    { label: 'Semi-urban users', percentage: 22, color: '#E8690B' },
-                    { label: 'Rural users — primary beneficiaries', percentage: 9, color: '#E8690B' },
-                    { label: 'Rural users comfortable with voice', percentage: 68, color: '#1A6B3C' },
-                    { label: 'Indians using voice search daily', percentage: 140, label2: 'M', color: '#1A6B3C' },
+                    { label: g(S.landing.barUrban, lang), percentage: 42, color: '#E8690B' },
+                    { label: g(S.landing.barSemiUrban, lang), percentage: 22, color: '#E8690B' },
+                    { label: g(S.landing.barRural, lang), percentage: 9, color: '#E8690B' },
+                    { label: g(S.landing.barRuralVoice, lang), percentage: 68, color: '#1A6B3C' },
+                    { label: g(S.landing.barVoiceSearch, lang), percentage: 140, label2: 'M', color: '#1A6B3C' },
                   ].map((bar, idx) => (
                     <div key={idx} className="flex items-center gap-3">
                       <div className="text-[10px] text-[#57534E] w-[150px] flex-shrink-0">{bar.label}</div>
@@ -629,9 +646,9 @@ export default function SuvidhaAILanding() {
 
               {/* Callout Box */}
               <div className="bg-[#FFF8F1] border-[1.5px] border-[#FED7AA] rounded-[10px] p-4">
-                <h4 className="text-[11px] font-bold text-[#C2570A] mb-2">The gap in plain terms</h4>
+                <h4 className="text-[11px] font-bold text-[#C2570A] mb-2">{g(S.landing.calloutTitle, lang)}</h4>
                 <p className="text-[13px] text-[#7C3009] leading-[1.65]">
-                  <span className="font-bold">Rural citizens are the primary intended beneficiaries of most welfare schemes</span> — yet existing digital portals reach only 9% of them. SuvidhaAI is built for the 91% that existing tools have not reached.
+                  <span className="font-bold">{g(S.landing.calloutBoldPart, lang)}</span>{g(S.landing.calloutRest, lang)}
                 </p>
               </div>
             </div>
@@ -640,32 +657,32 @@ export default function SuvidhaAILanding() {
       </section>
 
       {/* SECTION 7: HOW IT WORKS */}
-      <section className="bg-white border-t border-[#E7E0D8] px-12 py-[68px]">
+      <section className="bg-white border-t border-[#E7E0D8] px-5 sm:px-8 lg:px-12 py-[68px]">
         <div className="max-w-7xl mx-auto">
           {/* Header */}
           <div className="text-center mb-12">
             <span className="text-[10px] uppercase font-bold text-[#E8690B] tracking-widest" style={{ fontFamily: 'var(--font-mukta)' }}>
-              Step by step
+              {g(S.landing.howTag, lang)}
             </span>
             <h2 className="text-[30px] font-bold mt-2" style={{ fontFamily: 'var(--font-libre-baskerville)' }}>
-              From confusion to clarity in under 3 minutes
+              {g(S.landing.howHeading, lang)}
             </h2>
             <p className="text-[14px] text-[#57534E] max-w-[540px] mx-auto mt-3">
-              SuvidhaAI guides you through every step — from not knowing what you qualify for, to walking into a CSC fully prepared.
+              {g(S.landing.howSub, lang)}
             </p>
           </div>
 
           {/* Step Cards */}
           <div>
             {/* Row 1 */}
-            <div className="grid grid-cols-3 gap-5 relative mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 relative mb-4">
               {/* Connector line */}
-              <div className="absolute top-8 left-[16.66%] right-[16.66%] h-0.5 bg-[#E7E0D8] pointer-events-none"></div>
+              <div className="hidden sm:block absolute top-8 left-[16.66%] right-[16.66%] h-0.5 bg-[#E7E0D8] pointer-events-none"></div>
 
               {[
-                { step: 1, title: 'Speak or Type' },
-                { step: 2, title: 'AI Scans 500+ Schemes', highlight: true },
-                { step: 3, title: 'See What You Qualify For' },
+                { step: 1, title: g(S.landing.step1Title, lang) },
+                { step: 2, title: g(S.landing.step2Title, lang), highlight: true },
+                { step: 3, title: g(S.landing.step3Title, lang) },
               ].map((item) => (
                 <div
                   key={item.step}
@@ -713,9 +730,9 @@ export default function SuvidhaAILanding() {
                   {/* Title & Description */}
                   <h3 className="text-[13px] font-bold text-[#1C1917] mb-1">{item.title}</h3>
                   <p className="text-[11px] text-[#57534E] leading-[1.55]">
-                    {item.step === 1 && 'Say who you are in Hindi, Marathi, or English. No dropdowns, no forms. Just speak naturally.'}
-                    {item.step === 2 && 'We extract your profile automatically and match you against every central and state government scheme.'}
-                    {item.step === 3 && 'Each result tells you clearly: Eligible, Maybe Eligible, or Not Eligible — with a plain-language explanation.'}
+                    {item.step === 1 && g(S.landing.step1Desc, lang)}
+                    {item.step === 2 && g(S.landing.step2Desc, lang)}
+                    {item.step === 3 && g(S.landing.step3Desc, lang)}
                   </p>
                 </div>
               ))}
@@ -731,11 +748,11 @@ export default function SuvidhaAILanding() {
             </div>
 
             {/* Row 2 */}
-            <div className="grid grid-cols-3 gap-5 relative">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 relative">
               {[
-                { step: 4, title: 'Get Warned Before You Apply' },
-                { step: 5, title: 'Get Your Preparation Document' },
-                { step: 6, title: 'Share on WhatsApp' },
+                { step: 4, title: g(S.landing.step4Title, lang) },
+                { step: 5, title: g(S.landing.step5Title, lang) },
+                { step: 6, title: g(S.landing.step6Title, lang) },
               ].map((item) => (
                 <div
                   key={item.step}
@@ -779,9 +796,9 @@ export default function SuvidhaAILanding() {
                   {/* Title & Description */}
                   <h3 className="text-[13px] font-bold text-[#1C1917] mb-1">{item.title}</h3>
                   <p className="text-[11px] text-[#57534E] leading-[1.55]">
-                    {item.step === 4 && 'We show common rejection reasons so you fix them before applying — saving wasted trips.'}
-                    {item.step === 5 && 'A printable summary with your details pre-filled, documents to carry, and where to go — in your language.'}
-                    {item.step === 6 && 'One tap sends all your matched schemes to WhatsApp so your family or CSC operator can help you apply.'}
+                    {item.step === 4 && g(S.landing.step4Desc, lang)}
+                    {item.step === 5 && g(S.landing.step5Desc, lang)}
+                    {item.step === 6 && g(S.landing.step6Desc, lang)}
                   </p>
                 </div>
               ))}
@@ -791,69 +808,69 @@ export default function SuvidhaAILanding() {
       </section>
 
       {/* SECTION 8: AUDIENCE CATEGORY CARDS */}
-      <section className="bg-[#FAF7F2] border-t border-[#E7E0D8] px-12 py-[68px]">
+      <section className="bg-[#FAF7F2] border-t border-[#E7E0D8] px-5 sm:px-8 lg:px-12 py-[68px]">
         <div className="max-w-7xl mx-auto">
           {/* Header */}
           <div className="text-center mb-9">
             <span className="text-[10px] uppercase font-bold text-[#E8690B] tracking-widest" style={{ fontFamily: 'var(--font-mukta)' }}>
-              Find by who you are
+              {g(S.landing.audienceTag, lang)}
             </span>
             <h2 className="text-[30px] font-bold mt-2" style={{ fontFamily: 'var(--font-libre-baskerville)' }}>
-              Every citizen. Every scheme.
+              {g(S.landing.audienceHeading, lang)}
             </h2>
             <p className="text-[14px] text-[#57534E] max-w-[540px] mx-auto mt-3">
-              Select your situation — we show every scheme you qualify for with full guidance to claim it.
+              {g(S.landing.audienceSub, lang)}
             </p>
           </div>
 
           {/* Cards Grid */}
-          <div className="grid grid-cols-3 gap-3.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
             {[
               {
-                title: 'Farmers',
+                title: g(S.landing.audFarmers, lang),
                 image: '/images/aud-farmers.jpg',
-                count: '6 SCHEMES',
-                description: 'Crop insurance, income support, solar pumps, credit',
+                count: gf(S.landing.schemesCount, lang, 6),
+                description: g(S.landing.audFarmersDesc, lang),
                 overlay: '#1B5E20',
                 link: '#1B5E20',
               },
               {
-                title: 'Women',
+                title: g(S.landing.audWomen, lang),
                 image: '/images/aud-women.jpg',
-                count: '8 SCHEMES',
-                description: 'Maternity, widow pension, LPG, entrepreneurship loans',
+                count: gf(S.landing.schemesCount, lang, 8),
+                description: g(S.landing.audWomenDesc, lang),
                 overlay: '#880E4F',
                 link: '#880E4F',
               },
               {
-                title: 'Senior Citizens',
+                title: g(S.landing.audSeniors, lang),
                 image: '/images/aud-seniors.avif',
-                count: '3 SCHEMES',
-                description: 'Old age pension, Ayushman health cover, savings',
+                count: gf(S.landing.schemesCount, lang, 3),
+                description: g(S.landing.audSeniorsDesc, lang),
                 overlay: '#0D47A1',
                 link: '#0D47A1',
               },
               {
-                title: 'Students & Youth',
+                title: g(S.landing.audStudents, lang),
                 image: '/images/aud-students.jpg',
-                count: '8 SCHEMES',
-                description: 'Scholarships, skill training, internships, loans',
+                count: gf(S.landing.schemesCount, lang, 8),
+                description: g(S.landing.audStudentsDesc, lang),
                 overlay: '#BF360C',
                 link: '#BF360C',
               },
               {
-                title: 'Business & Self-Employed',
+                title: g(S.landing.audBusiness, lang),
                 image: '/images/aud-business.jpg',
-                count: '6 SCHEMES',
-                description: 'Mudra loans, vendor credit, PMEGP grants',
+                count: gf(S.landing.schemesCount, lang, 6),
+                description: g(S.landing.audBusinessDesc, lang),
                 overlay: '#004D40',
                 link: '#004D40',
               },
               {
-                title: 'Health & Housing',
+                title: g(S.landing.audHealth, lang),
                 image: '/images/aud-health.avif',
-                count: '5 SCHEMES',
-                description: 'Ayushman health cover, PM Awas Yojana, sanitation',
+                count: gf(S.landing.schemesCount, lang, 5),
+                description: g(S.landing.audHealthDesc, lang),
                 overlay: '#B71C1C',
                 link: '#B71C1C',
               },
@@ -880,7 +897,7 @@ export default function SuvidhaAILanding() {
                     {card.description}
                   </p>
                   <a href="#" className="text-[11px] font-bold flex items-center gap-1" style={{ color: card.link }}>
-                    View all schemes <ArrowRight size={14} />
+                    {g(S.landing.viewAll, lang)} <ArrowRight size={14} />
                   </a>
                 </div>
               </div>
@@ -890,22 +907,22 @@ export default function SuvidhaAILanding() {
       </section>
 
       {/* FOOTER */}
-      <footer className="bg-[#1C1917] px-12 py-7">
+      <footer className="bg-[#1C1917] px-5 sm:px-8 lg:px-12 py-7">
         <div className="max-w-7xl mx-auto flex justify-between items-center flex-wrap gap-3">
           {/* Left: Logo */}
           <div className="flex items-center gap-2">
             <CitizenOrbitalLogoMark size={26} />
-            <SuvidhaWordmark darkBackground titleSize={14} subtitleSize={7} />
+            <SuvidhaWordmark darkBackground titleSize={14} subtitleSize={7} tagline={g(S.landing.tagline, lang)} />
           </div>
 
           {/* Center: Info */}
           <div className="text-[11px] text-[rgba(255,255,255,0.3)] text-center">
-            Data sourced from official Government of India portals · Free for every citizen
+            {g(S.landing.footerInfo, lang)}
           </div>
 
           {/* Right: Links */}
           <div className="flex gap-6 text-[11px] text-[rgba(255,255,255,0.3)]">
-            {['About', 'Help', 'Privacy', 'Contact'].map((link) => (
+            {[g(S.landing.footerAbout, lang), g(S.landing.footerHelp, lang), g(S.landing.footerPrivacy, lang), g(S.landing.footerContact, lang)].map((link) => (
               <a key={link} href="#" className="hover:text-[#E8690B] transition-colors">
                 {link}
               </a>

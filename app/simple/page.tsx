@@ -24,17 +24,53 @@ type Message = {
 type SchemeItem = {
   id: number;
   nameHindi: string;
+  nameEnglish: string;
+  nameMr: string;
   logo: string;
   headerColor: string;
   amount: string;
   unit: string;
+  unitEnglish: string;
+  unitMr: string;
   desc: string;
+  descEnglish: string;
+  descMr: string;
   eligible: boolean;
-  matchLabel: string;
+  matchTier: 'high' | 'medium';
   matchColor: string;
   warning: string | null;
+  warningEnglish: string | null;
+  warningMr: string | null;
   steps: string[];
+  stepsEnglish: string[];
+  stepsMr: string[];
 };
+
+function getSchemeName(scheme: SchemeItem, lang: UiLang): string {
+  if (lang === 'en-IN') return scheme.nameEnglish;
+  if (lang === 'mr-IN') return scheme.nameMr;
+  return scheme.nameHindi;
+}
+function getSchemeUnit(scheme: SchemeItem, lang: UiLang): string {
+  if (lang === 'en-IN') return scheme.unitEnglish;
+  if (lang === 'mr-IN') return scheme.unitMr;
+  return scheme.unit;
+}
+function getSchemeDesc(scheme: SchemeItem, lang: UiLang): string {
+  if (lang === 'en-IN') return scheme.descEnglish;
+  if (lang === 'mr-IN') return scheme.descMr;
+  return scheme.desc;
+}
+function getSchemeWarning(scheme: SchemeItem, lang: UiLang): string | null {
+  if (lang === 'en-IN') return scheme.warningEnglish;
+  if (lang === 'mr-IN') return scheme.warningMr;
+  return scheme.warning;
+}
+function getSchemeSteps(scheme: SchemeItem, lang: UiLang): string[] {
+  if (lang === 'en-IN') return scheme.stepsEnglish;
+  if (lang === 'mr-IN') return scheme.stepsMr;
+  return scheme.steps;
+}
 
 const getTime = () => new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 
@@ -43,7 +79,7 @@ function speak(text: string, lang = 'hi-IN') {
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = lang;
-  utterance.rate = 0.82;
+  utterance.rate = lang === 'en-IN' ? 0.95 : 0.82;
   utterance.pitch = 1;
   utterance.volume = 1;
   window.speechSynthesis.speak(utterance);
@@ -53,7 +89,7 @@ type UiLang = 'hi-IN' | 'mr-IN' | 'en-IN';
 
 const uiStrings = {
   'hi-IN': {
-    govSchemeHelper: 'GOVERNMENT SCHEME HELPER',
+    govSchemeHelper: 'सरकारी योजना सहायक',
     sarkariSahayak: 'सरकारी सहायक',
     activeConversation: 'ACTIVE CONVERSATION',
     farmerSearch: 'Farmer schemes search',
@@ -63,7 +99,7 @@ const uiStrings = {
     csc: 'नज़दीकी CSC खोजें',
     simpleMode: 'सरल मोड',
     detailedMode: 'विस्तृत',
-    sarkaricSahayakSub: 'सरकारी सहायक · Simple Mode',
+    sarkaricSahayakSub: 'सरकारी सहायक · सरल मोड',
     typeHere: 'यहाँ लिखें या नीचे बोलें...',
     shareBtn: 'Share',
     helplineBtn: 'Helpline 155261',
@@ -95,9 +131,21 @@ const uiStrings = {
     goBtn: 'Go',
     voiceQuery: 'किसान कर्ज़ और खेती की योजना बताइए',
     progressLabel: (checked: number, total: number) => checked + ' में से ' + total + ' तैयार',
+    eligibleBadge: '✓ पात्र',
+    verifyBadge: '⚠ जाँच करें',
+    howToGet: 'कैसे मिलेगा?',
+    appStepsLabel: 'आवेदन के चरण:',
+    documentsLabel: 'दस्तावेज़:',
+    commonDocsList: 'आधार, बैंक पासबुक, पहचान पत्र',
+    matchHigh: 'उच्च मिलान',
+    matchMedium: 'मध्यम मिलान',
+    matchStatusLabel: 'मिलान स्थिति:',
+    whatsappHeader: 'SuvidhaAI योजनाएँ:',
+    homeLabel: 'होम',
+    comingSoon: 'Full Mode — जल्द आ रहा है',
   },
   'mr-IN': {
-    govSchemeHelper: 'GOVERNMENT SCHEME HELPER',
+    govSchemeHelper: 'सरकारी योजना सहाय्यक',
     sarkariSahayak: 'सरकारी सहाय्यक',
     activeConversation: 'सक्रिय संभाषण',
     farmerSearch: 'शेतकरी योजना शोध',
@@ -107,7 +155,7 @@ const uiStrings = {
     csc: 'जवळचे CSC शोधा',
     simpleMode: 'सरल मोड',
     detailedMode: 'तपशील',
-    sarkaricSahayakSub: 'सरकारी सहाय्यक · Simple Mode',
+    sarkaricSahayakSub: 'सरकारी सहाय्यक · सोपी पद्धत',
     typeHere: 'येथे लिहा किंवा खाली बोला...',
     shareBtn: 'Share',
     helplineBtn: 'Helpline 155261',
@@ -139,6 +187,18 @@ const uiStrings = {
     goBtn: 'Go',
     voiceQuery: 'शेतकरी कर्ज आणि शेतीच्या योजना सांगा',
     progressLabel: (checked: number, total: number) => total + ' पैकी ' + checked + ' तयार',
+    eligibleBadge: '✓ पात्र',
+    verifyBadge: '⚠ तपासा',
+    howToGet: 'कसे मिळेल?',
+    appStepsLabel: 'अर्जाचे टप्पे:',
+    documentsLabel: 'कागदपत्रे:',
+    commonDocsList: 'आधार, बँक पासबुक, ओळखपत्र',
+    matchHigh: 'उच्च जुळणी',
+    matchMedium: 'मध्यम जुळणी',
+    matchStatusLabel: 'जुळणी स्थिती:',
+    whatsappHeader: 'SuvidhaAI योजना:',
+    homeLabel: 'मुख्यपृष्ठ',
+    comingSoon: 'Full Mode — लवकरच येत आहे',
   },
   'en-IN': {
     govSchemeHelper: 'GOVERNMENT SCHEME HELPER',
@@ -183,6 +243,18 @@ const uiStrings = {
     goBtn: 'Go',
     voiceQuery: 'Tell me about farmer loans and agriculture schemes',
     progressLabel: (checked: number, total: number) => checked + ' of ' + total + ' ready',
+    eligibleBadge: '✓ Eligible',
+    verifyBadge: '⚠ Verify',
+    howToGet: 'How to Get?',
+    appStepsLabel: 'Application Steps:',
+    documentsLabel: 'Documents:',
+    commonDocsList: 'Aadhaar, Bank Passbook, ID Proof',
+    matchHigh: 'High Match',
+    matchMedium: 'Medium Match',
+    matchStatusLabel: 'Match Status:',
+    whatsappHeader: 'SuvidhaAI Schemes:',
+    homeLabel: 'Home',
+    comingSoon: 'Full Mode — Coming Soon',
   }
 }
 
@@ -241,312 +313,503 @@ const schemeData: Record<SchemeCategory, SchemeItem[]> = {
     {
       id: 1,
       nameHindi: 'पीएम किसान सम्मान निधि',
+      nameEnglish: 'PM Kisan Samman Nidhi',
+      nameMr: 'पीएम किसान सन्मान निधी',
       logo: '/images/scheme-kisan.jpg',
       headerColor: '#1A6B3C',
       amount: '₹6,000',
       unit: 'सालाना',
+      unitEnglish: 'per year',
+      unitMr: 'वार्षिक',
       desc: 'सीधे बैंक खाते में · 3 किस्तों में',
+      descEnglish: 'Directly to bank account · in 3 installments',
+      descMr: 'थेट बँक खात्यात · 3 हप्त्यांमध्ये',
       eligible: true,
-      matchLabel: 'High Match',
+      matchTier: 'high',
       matchColor: '#1A6B3C',
       warning: 'आधार को बैंक खाते से लिंक करना ज़रूरी है।',
+      warningEnglish: 'Aadhaar must be linked to your bank account.',
+      warningMr: 'आधार बँक खात्याशी जोडणे आवश्यक आहे.',
       steps: ['pmkisan.gov.in पर जाएं या CSC केंद्र जाएं', 'New Farmer Registration पर क्लिक करें', 'आधार नंबर डालें', 'ज़मीन के कागज़ और बैंक नंबर भरें', 'Submit करें और Reference Number नोट करें'],
+      stepsEnglish: ['Visit pmkisan.gov.in or a CSC centre', 'Click New Farmer Registration', 'Enter your Aadhaar number', 'Fill land records and bank account number', 'Submit and note the Reference Number'],
+      stepsMr: ['pmkisan.gov.in वर जा किंवा CSC केंद्रात जा', 'New Farmer Registration वर क्लिक करा', 'आधार क्रमांक टाका', 'जमिनीचे कागद आणि बँक क्रमांक भरा', 'Submit करा आणि Reference Number नोंदवा'],
     },
     {
       id: 2,
       nameHindi: 'प्रधानमंत्री फसल बीमा',
+      nameEnglish: 'PM Fasal Bima Yojana',
+      nameMr: 'पंतप्रधान पीक विमा योजना',
       logo: '/images/scheme-fasal-bima.png',
       headerColor: '#E8690B',
       amount: 'फसल बीमा',
       unit: 'पूरे नुकसान की भरपाई',
+      unitEnglish: 'Full loss coverage',
+      unitMr: 'संपूर्ण नुकसान भरपाई',
       desc: 'बाढ़, सूखा, ओले — किसी भी नुकसान का मुआवज़ा',
+      descEnglish: 'Flood, drought, hail — compensation for any crop loss',
+      descMr: 'पूर, दुष्काळ, गारपीट — कोणत्याही नुकसानीची भरपाई',
       eligible: true,
-      matchLabel: 'High Match',
+      matchTier: 'high',
       matchColor: '#1A6B3C',
       warning: 'बुआई के 2 हफ्ते के अंदर आवेदन करना ज़रूरी है।',
+      warningEnglish: 'You must apply within 2 weeks of sowing.',
+      warningMr: 'पेरणीच्या 2 आठवड्यांच्या आत अर्ज करणे आवश्यक आहे.',
       steps: ['बैंक या CSC केंद्र पर जाएं', 'PMFBY Form भरें', 'खसरा नंबर और बुआई जानकारी दें', 'प्रीमियम का भुगतान करें', 'बीमा Certificate लें'],
+      stepsEnglish: ['Visit a bank or CSC centre', 'Fill the PMFBY form', 'Give Khasra number and sowing details', 'Pay the premium amount', 'Collect the insurance certificate'],
+      stepsMr: ['बँक किंवा CSC केंद्रात जा', 'PMFBY फॉर्म भरा', 'खसरा क्रमांक आणि पेरणीची माहिती द्या', 'प्रीमियम भरा', 'विमा प्रमाणपत्र घ्या'],
     },
     {
       id: 3,
       nameHindi: 'किसान क्रेडिट कार्ड',
+      nameEnglish: 'Kisan Credit Card',
+      nameMr: 'किसान क्रेडिट कार्ड',
       logo: '/images/scheme-jandhan.png',
       headerColor: '#1565C0',
       amount: '₹3 लाख',
       unit: '4% ब्याज पर',
+      unitEnglish: 'at 4% interest',
+      unitMr: '4% व्याजदराने',
       desc: 'खेती के लिए सस्ते कर्ज़ का सबसे आसान तरीका',
+      descEnglish: 'The easiest way to get low-interest loans for farming',
+      descMr: 'शेतीसाठी स्वस्त कर्ज मिळवण्याचा सर्वात सोपा मार्ग',
       eligible: false,
-      matchLabel: 'Medium Match',
+      matchTier: 'medium',
       matchColor: '#D97706',
       warning: 'ज़मीन आपके नाम होनी चाहिए।',
+      warningEnglish: 'Land must be registered in your own name.',
+      warningMr: 'जमीन तुमच्या नावावर असणे आवश्यक आहे.',
       steps: ['नज़दीकी बैंक में KCC Form लें', 'ज़मीन के कागज़ और पहचान पत्र लाएं', 'बैंक अधिकारी से बात करें', 'Form जमा करें', '7 दिन में Card मिलेगा'],
+      stepsEnglish: ['Get the KCC form at your nearest bank', 'Bring land records and ID proof', 'Speak with the bank officer', 'Submit the form', 'You will get the card within 7 days'],
+      stepsMr: ['जवळच्या बँकेत KCC फॉर्म घ्या', 'जमिनीचे कागद आणि ओळखपत्र आणा', 'बँक अधिकाऱ्याशी बोला', 'फॉर्म जमा करा', '7 दिवसांत कार्ड मिळेल'],
     },
   ],
   women: [
     {
       id: 4,
       nameHindi: 'पीएम उज्ज्वला योजना',
+      nameEnglish: 'PM Ujjwala Yojana',
+      nameMr: 'पीएम उज्ज्वला योजना',
       logo: '/images/scheme-ujjwala.png',
       headerColor: '#6A1B9A',
       amount: 'मुफ्त LPG',
       unit: 'गैस कनेक्शन',
+      unitEnglish: 'gas connection',
+      unitMr: 'गॅस कनेक्शन',
       desc: 'BPL परिवार की महिलाओं के लिए मुफ्त गैस कनेक्शन',
+      descEnglish: 'Free gas connection for women from BPL families',
+      descMr: 'BPL कुटुंबातील महिलांसाठी मोफत गॅस कनेक्शन',
       eligible: true,
-      matchLabel: 'High Match',
+      matchTier: 'high',
       matchColor: '#1A6B3C',
       warning: 'BPL राशन कार्ड होना ज़रूरी है।',
+      warningEnglish: 'A BPL ration card is required.',
+      warningMr: 'BPL रेशन कार्ड असणे आवश्यक आहे.',
       steps: ['नज़दीकी LPG वितरक के पास जाएं', 'Ujjwala Application Form लें', 'BPL कार्ड और आधार जमा करें', 'Verification के बाद Connection मिलेगा', 'पहला Cylinder मुफ्त मिलेगा'],
+      stepsEnglish: ['Visit your nearest LPG distributor', 'Get the Ujjwala application form', 'Submit BPL card and Aadhaar', 'You will get the connection after verification', 'The first cylinder is free'],
+      stepsMr: ['जवळच्या LPG वितरकाकडे जा', 'उज्ज्वला अर्ज फॉर्म घ्या', 'BPL कार्ड आणि आधार जमा करा', 'पडताळणीनंतर कनेक्शन मिळेल', 'पहिला सिलेंडर मोफत मिळेल'],
     },
     {
       id: 5,
       nameHindi: 'सुकन्या समृद्धि योजना',
+      nameEnglish: 'Sukanya Samridhi Yojana',
+      nameMr: 'सुकन्या समृद्धी योजना',
       logo: '/images/scheme-sukanya.png',
       headerColor: '#880E4F',
       amount: '8.2% ब्याज',
       unit: 'बेटी के लिए बचत',
+      unitEnglish: 'savings for your daughter',
+      unitMr: 'मुलीसाठी बचत',
       desc: '10 साल से कम उम्र की बेटी के लिए बचत खाता',
+      descEnglish: 'A savings account for a daughter under 10 years of age',
+      descMr: '10 वर्षांखालील मुलीसाठी बचत खाते',
       eligible: true,
-      matchLabel: 'High Match',
+      matchTier: 'high',
       matchColor: '#1A6B3C',
       warning: 'बेटी की उम्र 10 साल से कम होनी चाहिए।',
+      warningEnglish: 'The daughter must be under 10 years of age.',
+      warningMr: 'मुलीचे वय 10 वर्षांपेक्षा कमी असणे आवश्यक आहे.',
       steps: ['नज़दीकी Post Office या बैंक जाएं', 'Sukanya Samridhi Form लें', 'बेटी का Birth Certificate और आधार दें', 'न्यूनतम ₹250 से खाता खुलेगा', 'हर साल जमा करते रहें'],
+      stepsEnglish: ['Visit your nearest Post Office or bank', 'Get the Sukanya Samridhi form', 'Give daughter\'s birth certificate and Aadhaar', 'Account opens with a minimum of ₹250', 'Keep depositing every year'],
+      stepsMr: ['जवळच्या पोस्ट ऑफिस किंवा बँकेत जा', 'सुकन्या समृद्धी फॉर्म घ्या', 'मुलीचे जन्म प्रमाणपत्र आणि आधार द्या', 'किमान ₹250 ने खाते उघडेल', 'दरवर्षी रक्कम भरत राहा'],
     },
     {
       id: 6,
       nameHindi: 'मातृत्व वंदना योजना',
+      nameEnglish: 'Pradhan Mantri Matru Vandana Yojana',
+      nameMr: 'मातृत्व वंदना योजना',
       logo: '/images/scheme-ayushman.png',
       headerColor: '#E8690B',
       amount: '₹5,000',
       unit: 'पहले बच्चे पर',
+      unitEnglish: 'for the first child',
+      unitMr: 'पहिल्या मुलासाठी',
       desc: 'गर्भवती और स्तनपान कराने वाली महिलाओं के लिए',
+      descEnglish: 'For pregnant and breastfeeding women',
+      descMr: 'गरोदर आणि स्तनपान करणाऱ्या महिलांसाठी',
       eligible: true,
-      matchLabel: 'High Match',
+      matchTier: 'high',
       matchColor: '#1A6B3C',
       warning: 'पहले जीवित बच्चे के जन्म पर ही लागू।',
+      warningEnglish: 'Applicable only for the birth of the first living child.',
+      warningMr: 'फक्त पहिल्या जिवंत मुलाच्या जन्मासाठी लागू.',
       steps: ['नज़दीकी आंगनवाड़ी केंद्र जाएं', 'PMMVY Form-1A भरें', 'Bank Passbook और आधार दें', 'तीन किस्तों में पैसे मिलेंगे', 'आंगनवाड़ी कार्यकर्ता से मदद लें'],
+      stepsEnglish: ['Visit your nearest Anganwadi centre', 'Fill PMMVY Form-1A', 'Give bank passbook and Aadhaar', 'You will get money in three installments', 'Take help from the Anganwadi worker'],
+      stepsMr: ['जवळच्या अंगणवाडी केंद्रात जा', 'PMMVY फॉर्म-1A भरा', 'बँक पासबुक आणि आधार द्या', 'तीन हप्त्यांमध्ये पैसे मिळतील', 'अंगणवाडी सेविकेची मदत घ्या'],
     },
   ],
   student: [
     {
       id: 7,
       nameHindi: 'पीएम छात्रवृत्ति योजना',
+      nameEnglish: 'PM Scholarship Scheme',
+      nameMr: 'पीएम शिष्यवृत्ती योजना',
       logo: '/images/scheme-pmkvy.png',
       headerColor: '#E65100',
       amount: '₹36,000',
       unit: 'सालाना छात्रवृत्ति',
+      unitEnglish: 'annual scholarship',
+      unitMr: 'वार्षिक शिष्यवृत्ती',
       desc: 'पूर्व सैनिकों के बच्चों के लिए उच्च शिक्षा',
+      descEnglish: 'Higher education support for children of ex-servicemen',
+      descMr: 'माजी सैनिकांच्या मुलांसाठी उच्च शिक्षण',
       eligible: true,
-      matchLabel: 'High Match',
+      matchTier: 'high',
       matchColor: '#1A6B3C',
       warning: '12वीं में 60% से अधिक अंक होने चाहिए।',
+      warningEnglish: 'You must have scored above 60% in 12th grade.',
+      warningMr: '12वी मध्ये 60% पेक्षा जास्त गुण असणे आवश्यक आहे.',
       steps: ['ksb.gov.in पर जाएं', 'PM Scholarship के लिए Register करें', 'Mark Sheets और Documents Upload करें', 'Online Application Submit करें', 'Result एक महीने में आएगा'],
+      stepsEnglish: ['Visit ksb.gov.in', 'Register for the PM Scholarship', 'Upload mark sheets and documents', 'Submit the online application', 'Result comes within one month'],
+      stepsMr: ['ksb.gov.in वर जा', 'PM Scholarship साठी नोंदणी करा', 'गुणपत्रिका आणि कागदपत्रे अपलोड करा', 'ऑनलाइन अर्ज सबमिट करा', 'निकाल एका महिन्यात येईल'],
     },
     {
       id: 8,
       nameHindi: 'PMKVY कौशल विकास',
+      nameEnglish: 'PMKVY Skill Development',
+      nameMr: 'PMKVY कौशल्य विकास',
       logo: '/images/scheme-pmkvy.png',
       headerColor: '#1565C0',
       amount: 'मुफ्त Training',
       unit: 'Certificate के साथ',
+      unitEnglish: 'with certificate',
+      unitMr: 'प्रमाणपत्रासह',
       desc: 'युवाओं के लिए मुफ्त कौशल प्रशिक्षण और रोज़गार',
+      descEnglish: 'Free skill training and employment for youth',
+      descMr: 'युवकांसाठी मोफत कौशल्य प्रशिक्षण आणि रोजगार',
       eligible: true,
-      matchLabel: 'High Match',
+      matchTier: 'high',
       matchColor: '#1A6B3C',
       warning: null,
+      warningEnglish: null,
+      warningMr: null,
       steps: ['pmkvyofficial.org पर जाएं', 'नज़दीकी Training Centre ढूंढें', 'Registration करें', 'Training Complete करें', 'Certificate और Job Placement पाएं'],
+      stepsEnglish: ['Visit pmkvyofficial.org', 'Find your nearest training centre', 'Complete registration', 'Complete the training', 'Get certificate and job placement'],
+      stepsMr: ['pmkvyofficial.org वर जा', 'जवळचे प्रशिक्षण केंद्र शोधा', 'नोंदणी करा', 'प्रशिक्षण पूर्ण करा', 'प्रमाणपत्र आणि नोकरी मिळवा'],
     },
     {
       id: 9,
       nameHindi: 'नेशनल मेरिट स्कॉलरशिप',
+      nameEnglish: 'National Merit Scholarship',
+      nameMr: 'राष्ट्रीय गुणवत्ता शिष्यवृत्ती',
       logo: '/images/scheme-ayushman.png',
       headerColor: '#1A6B3C',
       amount: '₹12,000',
       unit: 'सालाना',
+      unitEnglish: 'per year',
+      unitMr: 'वार्षिक',
       desc: 'मेधावी छात्रों के लिए राष्ट्रीय छात्रवृत्ति',
+      descEnglish: 'National scholarship for meritorious students',
+      descMr: 'हुशार विद्यार्थ्यांसाठी राष्ट्रीय शिष्यवृत्ती',
       eligible: false,
-      matchLabel: 'Medium Match',
+      matchTier: 'medium',
       matchColor: '#D97706',
       warning: 'परिवार की आय ₹1.5 लाख से कम होनी चाहिए।',
+      warningEnglish: 'Family income must be less than ₹1.5 lakh.',
+      warningMr: 'कुटुंबाचे उत्पन्न ₹1.5 लाखांपेक्षा कमी असणे आवश्यक आहे.',
       steps: ['scholarships.gov.in पर जाएं', 'National Scholarship Portal पर Register करें', 'Institute और Course Details भरें', 'Income Certificate Upload करें', 'Submit करके Tracking ID नोट करें'],
+      stepsEnglish: ['Visit scholarships.gov.in', 'Register on the National Scholarship Portal', 'Fill institute and course details', 'Upload income certificate', 'Submit and note the tracking ID'],
+      stepsMr: ['scholarships.gov.in वर जा', 'National Scholarship Portal वर नोंदणी करा', 'संस्था आणि अभ्यासक्रमाचे तपशील भरा', 'उत्पन्नाचा दाखला अपलोड करा', 'सबमिट करून Tracking ID नोंदवा'],
     },
   ],
   housing: [
     {
       id: 10,
       nameHindi: 'पीएम आवास योजना ग्रामीण',
+      nameEnglish: 'PM Awas Yojana (Rural)',
+      nameMr: 'पीएम आवास योजना ग्रामीण',
       logo: '/images/scheme-awas.png',
       headerColor: '#1565C0',
       amount: '₹1.3 लाख',
       unit: 'घर बनाने के लिए',
+      unitEnglish: 'to build a house',
+      unitMr: 'घर बांधण्यासाठी',
       desc: 'ग्रामीण BPL परिवारों के लिए पक्के घर की सहायता',
+      descEnglish: 'Pucca house support for rural BPL families',
+      descMr: 'ग्रामीण BPL कुटुंबांसाठी पक्क्या घराची मदत',
       eligible: true,
-      matchLabel: 'High Match',
+      matchTier: 'high',
       matchColor: '#1A6B3C',
       warning: 'SECC 2011 सूची में नाम होना ज़रूरी है।',
+      warningEnglish: 'Your name must be in the SECC 2011 list.',
+      warningMr: 'SECC 2011 यादीत नाव असणे आवश्यक आहे.',
       steps: ['ग्राम पंचायत कार्यालय जाएं', 'PMAY-G के लिए आवेदन करें', 'BPL Card और आधार जमा करें', 'Survey के लिए Wait करें', 'स्वीकृति के बाद किस्तों में राशि मिलेगी'],
+      stepsEnglish: ['Visit the Gram Panchayat office', 'Apply for PMAY-G', 'Submit BPL card and Aadhaar', 'Wait for the survey', 'Amount comes in installments after approval'],
+      stepsMr: ['ग्रामपंचायत कार्यालयात जा', 'PMAY-G साठी अर्ज करा', 'BPL कार्ड आणि आधार जमा करा', 'सर्वेक्षणाची वाट पाहा', 'मंजुरीनंतर हप्त्यांमध्ये रक्कम मिळेल'],
     },
     {
       id: 11,
       nameHindi: 'पीएम आवास योजना शहरी',
+      nameEnglish: 'PM Awas Yojana (Urban)',
+      nameMr: 'पीएम आवास योजना शहरी',
       logo: '/images/scheme-awas.png',
       headerColor: '#E8690B',
       amount: '₹2.67 लाख',
       unit: 'Home Loan Subsidy',
+      unitEnglish: 'home loan subsidy',
+      unitMr: 'गृहकर्ज अनुदान',
       desc: 'शहरी गरीबों के लिए किफायती आवास',
+      descEnglish: 'Affordable housing for the urban poor',
+      descMr: 'शहरी गरिबांसाठी परवडणारी घरे',
       eligible: true,
-      matchLabel: 'High Match',
+      matchTier: 'high',
       matchColor: '#1A6B3C',
       warning: 'पहले से कोई पक्का घर नहीं होना चाहिए।',
+      warningEnglish: 'You must not already own a pucca house.',
+      warningMr: 'आधीच पक्के घर नसावे.',
       steps: ['pmaymis.gov.in पर जाएं', 'Online Apply करें', 'Income और Property Documents दें', 'Bank Home Loan के लिए Apply करें', 'Subsidy सीधे Loan Account में आएगी'],
+      stepsEnglish: ['Visit pmaymis.gov.in', 'Apply online', 'Give income and property documents', 'Apply to the bank for a home loan', 'Subsidy comes directly into the loan account'],
+      stepsMr: ['pmaymis.gov.in वर जा', 'ऑनलाइन अर्ज करा', 'उत्पन्न आणि मालमत्तेची कागदपत्रे द्या', 'बँकेकडे गृहकर्जासाठी अर्ज करा', 'अनुदान थेट कर्ज खात्यात येईल'],
     },
     {
       id: 12,
       nameHindi: 'स्वच्छ भारत मिशन शौचालय',
+      nameEnglish: 'Swachh Bharat Mission Toilet',
+      nameMr: 'स्वच्छ भारत मिशन शौचालय',
       logo: '/images/scheme-jandhan.png',
       headerColor: '#1A6B3C',
       amount: '₹12,000',
       unit: 'शौचालय निर्माण',
+      unitEnglish: 'toilet construction',
+      unitMr: 'शौचालय बांधकाम',
       desc: 'ग्रामीण परिवारों के लिए शौचालय बनाने की सहायता',
+      descEnglish: 'Support for rural families to build a toilet',
+      descMr: 'ग्रामीण कुटुंबांना शौचालय बांधण्यासाठी मदत',
       eligible: true,
-      matchLabel: 'High Match',
+      matchTier: 'high',
       matchColor: '#1A6B3C',
       warning: null,
+      warningEnglish: null,
+      warningMr: null,
       steps: ['ग्राम पंचायत से संपर्क करें', 'SBM Application Form भरें', 'आधार और Bank Details दें', 'शौचालय बनाएं', 'Completion Photo submit करें और ₹12,000 पाएं'],
+      stepsEnglish: ['Contact the Gram Panchayat', 'Fill the SBM application form', 'Give Aadhaar and bank details', 'Build the toilet', 'Submit completion photo and get ₹12,000'],
+      stepsMr: ['ग्रामपंचायतीशी संपर्क साधा', 'SBM अर्ज फॉर्म भरा', 'आधार आणि बँक तपशील द्या', 'शौचालय बांधा', 'पूर्णत्वाचा फोटो सबमिट करा आणि ₹12,000 मिळवा'],
     },
   ],
   senior: [
     {
       id: 13,
       nameHindi: 'इंदिरा गांधी वृद्धावस्था पेंशन',
+      nameEnglish: 'Indira Gandhi Old Age Pension',
+      nameMr: 'इंदिरा गांधी वृद्धापकाळ निवृत्तीवेतन',
       logo: '/images/scheme-jandhan.png',
       headerColor: '#1A6B3C',
       amount: '₹200-500',
       unit: 'हर महीने',
+      unitEnglish: 'every month',
+      unitMr: 'दरमहा',
       desc: '60 साल से अधिक उम्र के BPL नागरिकों के लिए पेंशन',
+      descEnglish: 'Pension for BPL citizens above 60 years of age',
+      descMr: '60 वर्षांवरील BPL नागरिकांसाठी निवृत्तीवेतन',
       eligible: true,
-      matchLabel: 'High Match',
+      matchTier: 'high',
       matchColor: '#1A6B3C',
       warning: 'BPL सूची में नाम होना ज़रूरी है।',
+      warningEnglish: 'Your name must be in the BPL list.',
+      warningMr: 'BPL यादीत नाव असणे आवश्यक आहे.',
       steps: ['ग्राम पंचायत या नगर पालिका जाएं', 'IGNOAPS Application Form लें', 'Age Proof और BPL Card जमा करें', 'Application Submit करें', 'Approval के बाद हर महीने पेंशन मिलेगी'],
+      stepsEnglish: ['Visit Gram Panchayat or municipal office', 'Get the IGNOAPS application form', 'Submit age proof and BPL card', 'Submit the application', 'Pension comes every month after approval'],
+      stepsMr: ['ग्रामपंचायत किंवा नगरपालिकेत जा', 'IGNOAPS अर्ज फॉर्म घ्या', 'वयाचा दाखला आणि BPL कार्ड जमा करा', 'अर्ज सबमिट करा', 'मंजुरीनंतर दरमहा निवृत्तीवेतन मिळेल'],
     },
     {
       id: 14,
       nameHindi: 'आयुष्मान भारत PMJAY',
+      nameEnglish: 'Ayushman Bharat PMJAY',
+      nameMr: 'आयुष्मान भारत PMJAY',
       logo: '/images/scheme-ayushman.png',
       headerColor: '#FF671F',
       amount: '₹5 लाख',
       unit: 'हर साल स्वास्थ्य बीमा',
+      unitEnglish: 'health cover per year',
+      unitMr: 'दरवर्षी आरोग्य विमा',
       desc: 'गरीब परिवारों के लिए मुफ्त अस्पताल इलाज',
+      descEnglish: 'Free hospital treatment for poor families',
+      descMr: 'गरीब कुटुंबांसाठी मोफत रुग्णालय उपचार',
       eligible: true,
-      matchLabel: 'High Match',
+      matchTier: 'high',
       matchColor: '#1A6B3C',
       warning: null,
+      warningEnglish: null,
+      warningMr: null,
       steps: ['pmjay.gov.in पर Eligibility Check करें', 'नज़दीकी Empanelled Hospital जाएं', 'Ayushman Card बनवाएं', 'इलाज के समय Card दिखाएं', '₹5 लाख तक मुफ्त इलाज मिलेगा'],
+      stepsEnglish: ['Check eligibility at pmjay.gov.in', 'Visit your nearest empanelled hospital', 'Get your Ayushman Card made', 'Show the card during treatment', 'Get free treatment up to ₹5 lakh'],
+      stepsMr: ['pmjay.gov.in वर पात्रता तपासा', 'जवळच्या नोंदणीकृत रुग्णालयात जा', 'आयुष्मान कार्ड बनवा', 'उपचारावेळी कार्ड दाखवा', '₹5 लाखांपर्यंत मोफत उपचार मिळतील'],
     },
     {
       id: 15,
       nameHindi: 'प्रधानमंत्री वय वंदना योजना',
+      nameEnglish: 'PM Vaya Vandana Yojana',
+      nameMr: 'प्रधानमंत्री वय वंदना योजना',
       logo: '/images/scheme-mudra.png',
       headerColor: '#1565C0',
       amount: '8% ब्याज',
       unit: 'गारंटीड पेंशन',
+      unitEnglish: 'guaranteed pension',
+      unitMr: 'हमी निवृत्तीवेतन',
       desc: '60 साल से अधिक उम्र के नागरिकों के लिए निवेश योजना',
+      descEnglish: 'An investment scheme for citizens above 60 years',
+      descMr: '60 वर्षांवरील नागरिकांसाठी गुंतवणूक योजना',
       eligible: true,
-      matchLabel: 'Medium Match',
+      matchTier: 'medium',
       matchColor: '#D97706',
       warning: 'अधिकतम ₹15 लाख तक निवेश कर सकते हैं।',
+      warningEnglish: 'You can invest up to a maximum of ₹15 lakh.',
+      warningMr: 'जास्तीत जास्त ₹15 लाखांपर्यंत गुंतवणूक करता येते.',
       steps: ['LIC की वेबसाइट या नज़दीकी शाखा जाएं', 'PMVVY Policy खरीदें', 'निवेश राशि तय करें', 'Monthly Pension Option चुनें', '8% सालाना Guaranteed Return पाएं'],
+      stepsEnglish: ['Visit the LIC website or your nearest branch', 'Buy the PMVVY policy', 'Decide the investment amount', 'Choose the monthly pension option', 'Get 8% guaranteed annual return'],
+      stepsMr: ['LIC वेबसाइट किंवा जवळच्या शाखेत जा', 'PMVVY पॉलिसी खरेदी करा', 'गुंतवणुकीची रक्कम ठरवा', 'मासिक निवृत्तीवेतन पर्याय निवडा', '8% वार्षिक हमी परतावा मिळवा'],
     },
   ],
   business: [
     {
       id: 16,
       nameHindi: 'पीएम मुद्रा योजना',
+      nameEnglish: 'PM Mudra Yojana',
+      nameMr: 'पीएम मुद्रा योजना',
       logo: '/images/scheme-mudra.png',
       headerColor: '#E8690B',
       amount: '₹10 लाख',
       unit: 'बिना Guarantee के',
+      unitEnglish: 'without guarantee',
+      unitMr: 'हमीशिवाय',
       desc: 'छोटे व्यापार के लिए आसान कर्ज़',
+      descEnglish: 'Easy loans for small businesses',
+      descMr: 'लहान व्यवसायासाठी सोपे कर्ज',
       eligible: true,
-      matchLabel: 'High Match',
+      matchTier: 'high',
       matchColor: '#1A6B3C',
       warning: 'व्यापार का कोई पूर्व अनुभव होना चाहिए।',
+      warningEnglish: 'Some prior business experience is required.',
+      warningMr: 'व्यवसायाचा काही आधीचा अनुभव असणे आवश्यक आहे.',
       steps: ['नज़दीकी बैंक जाएं', 'Mudra Loan Form लें', 'Business Plan और Documents दें', 'Shishu/Kishore/Tarun का चुनाव करें', 'Loan Approval के बाद Mudra Card मिलेगा'],
+      stepsEnglish: ['Visit your nearest bank', 'Get the Mudra loan form', 'Give business plan and documents', 'Choose Shishu/Kishore/Tarun category', 'You get the Mudra Card after loan approval'],
+      stepsMr: ['जवळच्या बँकेत जा', 'मुद्रा कर्ज फॉर्म घ्या', 'व्यवसाय योजना आणि कागदपत्रे द्या', 'शिशु/किशोर/तरुण श्रेणी निवडा', 'कर्ज मंजुरीनंतर मुद्रा कार्ड मिळेल'],
     },
     {
       id: 17,
       nameHindi: 'PM SVANidhi योजना',
+      nameEnglish: 'PM SVANidhi Yojana',
+      nameMr: 'PM SVANidhi योजना',
       logo: '/images/scheme-svanidhi.png',
       headerColor: '#1A6B3C',
       amount: '₹50,000',
       unit: 'Street Vendor Loan',
+      unitEnglish: 'street vendor loan',
+      unitMr: 'फेरीवाला कर्ज',
       desc: 'फुटपाथ दुकानदारों के लिए आसान कर्ज़',
+      descEnglish: 'Easy loans for street vendors',
+      descMr: 'फेरीवाल्यांसाठी सोपे कर्ज',
       eligible: true,
-      matchLabel: 'High Match',
+      matchTier: 'high',
       matchColor: '#1A6B3C',
       warning: 'Street Vendor Certificate होना ज़रूरी है।',
+      warningEnglish: 'A Street Vendor Certificate is required.',
+      warningMr: 'फेरीवाला प्रमाणपत्र असणे आवश्यक आहे.',
       steps: ['pmsvanidhi.mohua.gov.in पर जाएं', 'Vending Certificate बनवाएं', 'Bank में Application दें', '₹10,000 से शुरुआत होगी', 'समय पर चुकाने पर ₹50,000 तक मिलेगा'],
+      stepsEnglish: ['Visit pmsvanidhi.mohua.gov.in', 'Get your vending certificate made', 'Submit application at the bank', 'Starts with ₹10,000', 'Get up to ₹50,000 with timely repayment'],
+      stepsMr: ['pmsvanidhi.mohua.gov.in वर जा', 'विक्री प्रमाणपत्र बनवा', 'बँकेत अर्ज द्या', '₹10,000 पासून सुरुवात होईल', 'वेळेवर परतफेड केल्यास ₹50,000 पर्यंत मिळेल'],
     },
     {
       id: 18,
       nameHindi: 'PMEGP उद्यमिता योजना',
+      nameEnglish: 'PMEGP Entrepreneurship Scheme',
+      nameMr: 'PMEGP उद्योजकता योजना',
       logo: '/images/scheme-mudra.png',
       headerColor: '#1565C0',
       amount: '35% सब्सिडी',
       unit: 'Manufacturing Unit पर',
+      unitEnglish: 'on a manufacturing unit',
+      unitMr: 'उत्पादन युनिटवर',
       desc: 'नया Manufacturing या Service उद्यम शुरू करने पर सब्सिडी',
+      descEnglish: 'Subsidy for starting a new manufacturing or service business',
+      descMr: 'नवीन उत्पादन किंवा सेवा व्यवसाय सुरू केल्यास अनुदान',
       eligible: false,
-      matchLabel: 'Medium Match',
+      matchTier: 'medium',
       matchColor: '#D97706',
       warning: '8वीं पास होना और उम्र 18 से अधिक होना ज़रूरी है।',
+      warningEnglish: 'You must have passed 8th grade and be above 18 years old.',
+      warningMr: '8वी उत्तीर्ण आणि वय 18 वर्षांपेक्षा जास्त असणे आवश्यक आहे.',
       steps: ['kviconline.gov.in पर जाएं', 'PMEGP Application भरें', 'Project Report तैयार करें', 'DIC Office में Submit करें', 'Bank Interview के बाद Loan और Subsidy मिलेगी'],
+      stepsEnglish: ['Visit kviconline.gov.in', 'Fill the PMEGP application', 'Prepare a project report', 'Submit at the DIC office', 'Get loan and subsidy after the bank interview'],
+      stepsMr: ['kviconline.gov.in वर जा', 'PMEGP अर्ज भरा', 'प्रकल्प अहवाल तयार करा', 'DIC कार्यालयात सबमिट करा', 'बँक मुलाखतीनंतर कर्ज आणि अनुदान मिळेल'],
     },
   ],
 };
 
 const documentData = {
   farmer: [
-    { id: 'aadhaar', nameHindi: 'आधार कार्ड', nameEnglish: 'Aadhaar Card', tip: 'नाम ज़मीन के कागज़ से बिल्कुल मेल खाना चाहिए', imgSrc: '/docs/doc-aadhaar.jpg', fallbackColor: '#1565C0', required: true },
-    { id: 'passbook', nameHindi: 'बैंक पासबुक', nameEnglish: 'Bank Passbook', tip: 'आधार इस खाते से लिंक होना चाहिए', imgSrc: '/docs/doc-bank-passbook.jpg', fallbackColor: '#1A6B3C', required: true },
-    { id: 'khasra', nameHindi: 'ज़मीन के कागज़', nameEnglish: 'Khasra / Khatauni', tip: 'खसरा नंबर और क्षेत्रफल ज़रूरी है — पटवारी से लें', imgSrc: '/docs/doc-khasra-khatauni.jpg', fallbackColor: '#E8690B', required: true },
-    { id: 'mobile', nameHindi: 'मोबाइल नंबर', nameEnglish: 'Mobile Number (Aadhaar linked)', tip: 'आधार से जुड़ा नंबर होना चाहिए', imgSrc: '/docs/doc-mobile-number.jpg', fallbackColor: '#7C3AED', required: true },
-    { id: 'photo', nameHindi: 'पासपोर्ट फोटो', nameEnglish: 'Passport Size Photos', tip: '2 से 4 हाल की फोटो', imgSrc: '/docs/doc-passport-photo.jpg', fallbackColor: '#0F766E', required: true },
+    { id: 'aadhaar', nameHindi: 'आधार कार्ड', nameEnglish: 'Aadhaar Card', nameMr: 'आधार कार्ड', tip: 'नाम ज़मीन के कागज़ से बिल्कुल मेल खाना चाहिए', tipEnglish: 'Name must exactly match your land records', tipMr: 'नाव जमिनीच्या कागदपत्रांशी तंतोतंत जुळावे', imgSrc: '/docs/doc-aadhaar.jpg', fallbackColor: '#1565C0', required: true },
+    { id: 'passbook', nameHindi: 'बैंक पासबुक', nameEnglish: 'Bank Passbook', nameMr: 'बँक पासबुक', tip: 'आधार इस खाते से लिंक होना चाहिए', tipEnglish: 'Aadhaar must be linked to this account', tipMr: 'आधार या खात्याशी जोडलेले असावे', imgSrc: '/docs/doc-bank-passbook.jpg', fallbackColor: '#1A6B3C', required: true },
+    { id: 'khasra', nameHindi: 'ज़मीन के कागज़', nameEnglish: 'Khasra / Khatauni', nameMr: 'जमिनीचे कागद', tip: 'खसरा नंबर और क्षेत्रफल ज़रूरी है — पटवारी से लें', tipEnglish: 'Khasra number and area required — get it from the Patwari', tipMr: 'खसरा क्रमांक आणि क्षेत्रफळ आवश्यक — पटवारीकडून घ्या', imgSrc: '/docs/doc-khasra-khatauni.jpg', fallbackColor: '#E8690B', required: true },
+    { id: 'mobile', nameHindi: 'मोबाइल नंबर', nameEnglish: 'Mobile Number (Aadhaar linked)', nameMr: 'मोबाइल क्रमांक (आधार लिंक)', tip: 'आधार से जुड़ा नंबर होना चाहिए', tipEnglish: 'Must be the number linked to Aadhaar', tipMr: 'आधारशी जोडलेला क्रमांक असावा', imgSrc: '/docs/doc-mobile-number.jpg', fallbackColor: '#7C3AED', required: true },
+    { id: 'photo', nameHindi: 'पासपोर्ट फोटो', nameEnglish: 'Passport Size Photos', nameMr: 'पासपोर्ट फोटो', tip: '2 से 4 हाल की फोटो', tipEnglish: '2 to 4 recent photos', tipMr: '2 ते 4 अलीकडील फोटो', imgSrc: '/docs/doc-passport-photo.jpg', fallbackColor: '#0F766E', required: true },
   ],
   women: [
-    { id: 'aadhaar', nameHindi: 'आधार कार्ड', nameEnglish: 'Aadhaar Card', tip: 'नाम बिल्कुल सही होना चाहिए', imgSrc: '/docs/doc-aadhaar.jpg', fallbackColor: '#1565C0', required: true },
-    { id: 'ration', nameHindi: 'राशन कार्ड', nameEnglish: 'Ration Card (BPL)', tip: 'BPL राशन कार्ड होना ज़रूरी है', imgSrc: '/docs/doc-ration-card.jpg', fallbackColor: '#DC2626', required: true },
-    { id: 'passbook', nameHindi: 'बैंक पासबुक', nameEnglish: 'Bank Passbook', tip: 'महिला के नाम का खाता होना चाहिए', imgSrc: '/docs/doc-bank-passbook.jpg', fallbackColor: '#1A6B3C', required: true },
-    { id: 'marriage', nameHindi: 'विवाह प्रमाण पत्र', nameEnglish: 'Marriage Certificate', tip: 'विवाहित महिलाओं के लिए ज़रूरी', imgSrc: '/docs/doc-marriage-certificate.jpg', fallbackColor: '#BE185D', required: false },
-    { id: 'photo', nameHindi: 'पासपोर्ट फोटो', nameEnglish: 'Passport Size Photos', tip: '2 से 4 हाल की फोटो', imgSrc: '/docs/doc-passport-photo.jpg', fallbackColor: '#0F766E', required: true },
+    { id: 'aadhaar', nameHindi: 'आधार कार्ड', nameEnglish: 'Aadhaar Card', nameMr: 'आधार कार्ड', tip: 'नाम बिल्कुल सही होना चाहिए', tipEnglish: 'Name must be entirely correct', tipMr: 'नाव पूर्णपणे बरोबर असावे', imgSrc: '/docs/doc-aadhaar.jpg', fallbackColor: '#1565C0', required: true },
+    { id: 'ration', nameHindi: 'राशन कार्ड', nameEnglish: 'Ration Card (BPL)', nameMr: 'रेशन कार्ड (BPL)', tip: 'BPL राशन कार्ड होना ज़रूरी है', tipEnglish: 'A BPL ration card is required', tipMr: 'BPL रेशन कार्ड असणे आवश्यक आहे', imgSrc: '/docs/doc-ration-card.jpg', fallbackColor: '#DC2626', required: true },
+    { id: 'passbook', nameHindi: 'बैंक पासबुक', nameEnglish: 'Bank Passbook', nameMr: 'बँक पासबुक', tip: 'महिला के नाम का खाता होना चाहिए', tipEnglish: 'Account must be in the woman\'s name', tipMr: 'खाते महिलेच्या नावावर असावे', imgSrc: '/docs/doc-bank-passbook.jpg', fallbackColor: '#1A6B3C', required: true },
+    { id: 'marriage', nameHindi: 'विवाह प्रमाण पत्र', nameEnglish: 'Marriage Certificate', nameMr: 'विवाह प्रमाणपत्र', tip: 'विवाहित महिलाओं के लिए ज़रूरी', tipEnglish: 'Required for married women', tipMr: 'विवाहित महिलांसाठी आवश्यक', imgSrc: '/docs/doc-marriage-certificate.jpg', fallbackColor: '#BE185D', required: false },
+    { id: 'photo', nameHindi: 'पासपोर्ट फोटो', nameEnglish: 'Passport Size Photos', nameMr: 'पासपोर्ट फोटो', tip: '2 से 4 हाल की फोटो', tipEnglish: '2 to 4 recent photos', tipMr: '2 ते 4 अलीकडील फोटो', imgSrc: '/docs/doc-passport-photo.jpg', fallbackColor: '#0F766E', required: true },
   ],
   student: [
-    { id: 'aadhaar', nameHindi: 'आधार कार्ड', nameEnglish: 'Aadhaar Card', tip: 'नाम marksheet से मेल खाना चाहिए', imgSrc: '/docs/doc-aadhaar.jpg', fallbackColor: '#1565C0', required: true },
-    { id: 'marksheet', nameHindi: '12वीं की मार्कशीट', nameEnglish: '12th Marksheet', tip: 'न्यूनतम 60% अंक होने चाहिए', imgSrc: '/docs/doc-12th-marksheet.jpg', fallbackColor: '#E65100', required: true },
-    { id: 'bonafide', nameHindi: 'बोनाफाइड सर्टिफिकेट', nameEnglish: 'Bonafide / Admission Letter', tip: 'College में enrollment का प्रमाण — College से लें', imgSrc: '/docs/doc-bonafide-certificate.jpg', fallbackColor: '#0369A1', required: true },
-    { id: 'income', nameHindi: 'आय प्रमाण पत्र', nameEnglish: 'Income Certificate', tip: 'परिवार की सालाना आय का प्रमाण — तहसील से लें', imgSrc: '/docs/doc-income-certificate.jpg', fallbackColor: '#854D0E', required: true },
-    { id: 'passbook', nameHindi: 'बैंक पासबुक', nameEnglish: 'Bank Passbook', tip: 'छात्र के नाम का खाता', imgSrc: '/docs/doc-bank-passbook.jpg', fallbackColor: '#1A6B3C', required: true },
+    { id: 'aadhaar', nameHindi: 'आधार कार्ड', nameEnglish: 'Aadhaar Card', nameMr: 'आधार कार्ड', tip: 'नाम marksheet से मेल खाना चाहिए', tipEnglish: 'Name must match your marksheet', tipMr: 'नाव गुणपत्रिकेशी जुळावे', imgSrc: '/docs/doc-aadhaar.jpg', fallbackColor: '#1565C0', required: true },
+    { id: 'marksheet', nameHindi: '12वीं की मार्कशीट', nameEnglish: '12th Marksheet', nameMr: '12वीची गुणपत्रिका', tip: 'न्यूनतम 60% अंक होने चाहिए', tipEnglish: 'Minimum 60% marks required', tipMr: 'किमान 60% गुण आवश्यक', imgSrc: '/docs/doc-12th-marksheet.jpg', fallbackColor: '#E65100', required: true },
+    { id: 'bonafide', nameHindi: 'बोनाफाइड सर्टिफिकेट', nameEnglish: 'Bonafide / Admission Letter', nameMr: 'बोनाफाईड प्रमाणपत्र', tip: 'College में enrollment का प्रमाण — College से लें', tipEnglish: 'Proof of enrollment — get it from your college', tipMr: 'कॉलेजमध्ये प्रवेशाचा पुरावा — कॉलेजकडून घ्या', imgSrc: '/docs/doc-bonafide-certificate.jpg', fallbackColor: '#0369A1', required: true },
+    { id: 'income', nameHindi: 'आय प्रमाण पत्र', nameEnglish: 'Income Certificate', nameMr: 'उत्पन्नाचा दाखला', tip: 'परिवार की सालाना आय का प्रमाण — तहसील से लें', tipEnglish: 'Proof of annual family income — get it from Tehsil office', tipMr: 'कुटुंबाच्या वार्षिक उत्पन्नाचा पुरावा — तहसील कार्यालयातून घ्या', imgSrc: '/docs/doc-income-certificate.jpg', fallbackColor: '#854D0E', required: true },
+    { id: 'passbook', nameHindi: 'बैंक पासबुक', nameEnglish: 'Bank Passbook', nameMr: 'बँक पासबुक', tip: 'छात्र के नाम का खाता', tipEnglish: 'Account must be in the student\'s name', tipMr: 'खाते विद्यार्थ्याच्या नावावर असावे', imgSrc: '/docs/doc-bank-passbook.jpg', fallbackColor: '#1A6B3C', required: true },
   ],
   housing: [
-    { id: 'aadhaar', nameHindi: 'आधार कार्ड', nameEnglish: 'Aadhaar Card', tip: 'नाम सभी कागज़ों से मेल खाना चाहिए', imgSrc: '/docs/doc-aadhaar.jpg', fallbackColor: '#1565C0', required: true },
-    { id: 'ration', nameHindi: 'राशन कार्ड', nameEnglish: 'Ration Card (BPL)', tip: 'SECC 2011 सूची में नाम होना चाहिए', imgSrc: '/docs/doc-ration-card.jpg', fallbackColor: '#DC2626', required: true },
-    { id: 'income', nameHindi: 'आय प्रमाण पत्र', nameEnglish: 'Income Certificate', tip: 'परिवार की आय 3 लाख से कम होनी चाहिए', imgSrc: '/docs/doc-income-certificate.jpg', fallbackColor: '#854D0E', required: true },
-    { id: 'passbook', nameHindi: 'बैंक पासबुक', nameEnglish: 'Bank Passbook', tip: 'DBT के लिए आधार से लिंक होना चाहिए', imgSrc: '/docs/doc-bank-passbook.jpg', fallbackColor: '#1A6B3C', required: true },
-    { id: 'photo', nameHindi: 'पासपोर्ट फोटो', nameEnglish: 'Passport Size Photos', tip: '4 हाल की पासपोर्ट साइज़ फोटो', imgSrc: '/docs/doc-passport-photo.jpg', fallbackColor: '#0F766E', required: true },
+    { id: 'aadhaar', nameHindi: 'आधार कार्ड', nameEnglish: 'Aadhaar Card', nameMr: 'आधार कार्ड', tip: 'नाम सभी कागज़ों से मेल खाना चाहिए', tipEnglish: 'Name must match all documents', tipMr: 'नाव सर्व कागदपत्रांशी जुळावे', imgSrc: '/docs/doc-aadhaar.jpg', fallbackColor: '#1565C0', required: true },
+    { id: 'ration', nameHindi: 'राशन कार्ड', nameEnglish: 'Ration Card (BPL)', nameMr: 'रेशन कार्ड (BPL)', tip: 'SECC 2011 सूची में नाम होना चाहिए', tipEnglish: 'Name must be in the SECC 2011 list', tipMr: 'SECC 2011 यादीत नाव असावे', imgSrc: '/docs/doc-ration-card.jpg', fallbackColor: '#DC2626', required: true },
+    { id: 'income', nameHindi: 'आय प्रमाण पत्र', nameEnglish: 'Income Certificate', nameMr: 'उत्पन्नाचा दाखला', tip: 'परिवार की आय 3 लाख से कम होनी चाहिए', tipEnglish: 'Family income must be under ₹3 lakh', tipMr: 'कुटुंबाचे उत्पन्न ₹3 लाखांपेक्षा कमी असावे', imgSrc: '/docs/doc-income-certificate.jpg', fallbackColor: '#854D0E', required: true },
+    { id: 'passbook', nameHindi: 'बैंक पासबुक', nameEnglish: 'Bank Passbook', nameMr: 'बँक पासबुक', tip: 'DBT के लिए आधार से लिंक होना चाहिए', tipEnglish: 'Must be Aadhaar-linked for DBT', tipMr: 'DBT साठी आधारशी जोडलेले असावे', imgSrc: '/docs/doc-bank-passbook.jpg', fallbackColor: '#1A6B3C', required: true },
+    { id: 'photo', nameHindi: 'पासपोर्ट फोटो', nameEnglish: 'Passport Size Photos', nameMr: 'पासपोर्ट फोटो', tip: '4 हाल की पासपोर्ट साइज़ फोटो', tipEnglish: '4 recent passport size photos', tipMr: '4 अलीकडील पासपोर्ट साईज फोटो', imgSrc: '/docs/doc-passport-photo.jpg', fallbackColor: '#0F766E', required: true },
   ],
   senior: [
-    { id: 'aadhaar', nameHindi: 'आधार कार्ड', nameEnglish: 'Aadhaar Card', tip: 'उम्र का प्रमाण — 60 साल से अधिक', imgSrc: '/docs/doc-aadhaar.jpg', fallbackColor: '#1565C0', required: true },
-    { id: 'age', nameHindi: 'उम्र का प्रमाण', nameEnglish: 'Age Proof (Birth Certificate)', tip: 'जन्म प्रमाण पत्र या 10वीं मार्कशीट — ग्राम पंचायत से लें', imgSrc: '/docs/doc-birth-certificate.jpg', fallbackColor: '#7C3AED', required: true },
-    { id: 'ration', nameHindi: 'राशन कार्ड', nameEnglish: 'Ration Card (BPL)', tip: 'BPL सूची में नाम होना ज़रूरी है', imgSrc: '/docs/doc-ration-card.jpg', fallbackColor: '#DC2626', required: true },
-    { id: 'passbook', nameHindi: 'बैंक पासबुक', nameEnglish: 'Bank Passbook', tip: 'पेंशन इसी खाते में आएगी', imgSrc: '/docs/doc-bank-passbook.jpg', fallbackColor: '#1A6B3C', required: true },
-    { id: 'photo', nameHindi: 'पासपोर्ट फोटो', nameEnglish: 'Passport Size Photos', tip: '2 हाल की पासपोर्ट साइज़ फोटो', imgSrc: '/docs/doc-passport-photo.jpg', fallbackColor: '#0F766E', required: true },
+    { id: 'aadhaar', nameHindi: 'आधार कार्ड', nameEnglish: 'Aadhaar Card', nameMr: 'आधार कार्ड', tip: 'उम्र का प्रमाण — 60 साल से अधिक', tipEnglish: 'Proof of age — above 60 years', tipMr: 'वयाचा पुरावा — 60 वर्षांपेक्षा जास्त', imgSrc: '/docs/doc-aadhaar.jpg', fallbackColor: '#1565C0', required: true },
+    { id: 'age', nameHindi: 'उम्र का प्रमाण', nameEnglish: 'Age Proof (Birth Certificate)', nameMr: 'वयाचा दाखला', tip: 'जन्म प्रमाण पत्र या 10वीं मार्कशीट — ग्राम पंचायत से लें', tipEnglish: 'Birth certificate or 10th marksheet — get it from Gram Panchayat', tipMr: 'जन्म दाखला किंवा 10वीची गुणपत्रिका — ग्रामपंचायतीकडून घ्या', imgSrc: '/docs/doc-birth-certificate.jpg', fallbackColor: '#7C3AED', required: true },
+    { id: 'ration', nameHindi: 'राशन कार्ड', nameEnglish: 'Ration Card (BPL)', nameMr: 'रेशन कार्ड (BPL)', tip: 'BPL सूची में नाम होना ज़रूरी है', tipEnglish: 'Name must be in the BPL list', tipMr: 'BPL यादीत नाव असणे आवश्यक आहे', imgSrc: '/docs/doc-ration-card.jpg', fallbackColor: '#DC2626', required: true },
+    { id: 'passbook', nameHindi: 'बैंक पासबुक', nameEnglish: 'Bank Passbook', nameMr: 'बँक पासबुक', tip: 'पेंशन इसी खाते में आएगी', tipEnglish: 'Pension will come into this account', tipMr: 'निवृत्तीवेतन याच खात्यात येईल', imgSrc: '/docs/doc-bank-passbook.jpg', fallbackColor: '#1A6B3C', required: true },
+    { id: 'photo', nameHindi: 'पासपोर्ट फोटो', nameEnglish: 'Passport Size Photos', nameMr: 'पासपोर्ट फोटो', tip: '2 हाल की पासपोर्ट साइज़ फोटो', tipEnglish: '2 recent passport size photos', tipMr: '2 अलीकडील पासपोर्ट साईज फोटो', imgSrc: '/docs/doc-passport-photo.jpg', fallbackColor: '#0F766E', required: true },
   ],
   business: [
-    { id: 'aadhaar', nameHindi: 'आधार कार्ड', nameEnglish: 'Aadhaar Card', tip: 'व्यापार मालिक का आधार', imgSrc: '/docs/doc-aadhaar.jpg', fallbackColor: '#1565C0', required: true },
-    { id: 'pan', nameHindi: 'पैन कार्ड', nameEnglish: 'PAN Card', tip: '1 लाख से अधिक के loan के लिए ज़रूरी', imgSrc: '/docs/doc-pan.jpg', fallbackColor: '#D97706', required: true },
-    { id: 'passbook', nameHindi: 'बैंक पासबुक', nameEnglish: 'Bank Passbook', tip: '6 महीने का statement भी चाहिए होगा', imgSrc: '/docs/doc-bank-passbook.jpg', fallbackColor: '#1A6B3C', required: true },
-    { id: 'business_reg', nameHindi: 'व्यापार प्रमाण', nameEnglish: 'Business Registration / Udyam', tip: 'Udyam Aadhar या Municipal Trade Licence', imgSrc: '/docs/doc-business-registration.jpg', fallbackColor: '#0369A1', required: false },
-    { id: 'photo', nameHindi: 'पासपोर्ट फोटो', nameEnglish: 'Passport Size Photos', tip: '2 हाल की पासपोर्ट साइज़ फोटो', imgSrc: '/docs/doc-passport-photo.jpg', fallbackColor: '#0F766E', required: true },
+    { id: 'aadhaar', nameHindi: 'आधार कार्ड', nameEnglish: 'Aadhaar Card', nameMr: 'आधार कार्ड', tip: 'व्यापार मालिक का आधार', tipEnglish: 'Aadhaar of the business owner', tipMr: 'व्यवसाय मालकाचे आधार', imgSrc: '/docs/doc-aadhaar.jpg', fallbackColor: '#1565C0', required: true },
+    { id: 'pan', nameHindi: 'पैन कार्ड', nameEnglish: 'PAN Card', nameMr: 'पॅन कार्ड', tip: '1 लाख से अधिक के loan के लिए ज़रूरी', tipEnglish: 'Required for loans above ₹1 lakh', tipMr: '₹1 लाखांपेक्षा जास्त कर्जासाठी आवश्यक', imgSrc: '/docs/doc-pan.jpg', fallbackColor: '#D97706', required: true },
+    { id: 'passbook', nameHindi: 'बैंक पासबुक', nameEnglish: 'Bank Passbook', nameMr: 'बँक पासबुक', tip: '6 महीने का statement भी चाहिए होगा', tipEnglish: 'A 6-month statement will also be needed', tipMr: '6 महिन्यांचे स्टेटमेंटही लागेल', imgSrc: '/docs/doc-bank-passbook.jpg', fallbackColor: '#1A6B3C', required: true },
+    { id: 'business_reg', nameHindi: 'व्यापार प्रमाण', nameEnglish: 'Business Registration / Udyam', nameMr: 'व्यवसाय नोंदणी / उद्यम', tip: 'Udyam Aadhar या Municipal Trade Licence', tipEnglish: 'Udyam Aadhaar or Municipal Trade Licence', tipMr: 'उद्यम आधार किंवा महानगरपालिका व्यापार परवाना', imgSrc: '/docs/doc-business-registration.jpg', fallbackColor: '#0369A1', required: false },
+    { id: 'photo', nameHindi: 'पासपोर्ट फोटो', nameEnglish: 'Passport Size Photos', nameMr: 'पासपोर्ट फोटो', tip: '2 हाल की पासपोर्ट साइज़ फोटो', tipEnglish: '2 recent passport size photos', tipMr: '2 अलीकडील पासपोर्ट साईज फोटो', imgSrc: '/docs/doc-passport-photo.jpg', fallbackColor: '#0F766E', required: true },
   ],
 };
+
+function getDocName(doc: DocumentItem, lang: UiLang): string {
+  if (lang === 'en-IN') return doc.nameEnglish;
+  if (lang === 'mr-IN') return doc.nameMr;
+  return doc.nameHindi;
+}
+function getDocTip(doc: DocumentItem, lang: UiLang): string {
+  if (lang === 'en-IN') return doc.tipEnglish;
+  if (lang === 'mr-IN') return doc.tipMr;
+  return doc.tip;
+}
 
 const visitScripts = {
   farmer: {
@@ -581,34 +844,34 @@ const visitScripts = {
   },
 };
 
-const docLocationMap: Record<string, string> = {
-  aadhaar: 'Aadhaar Centre या Post Office',
-  passbook: 'नज़दीकी बैंक शाखा',
-  khasra: 'पटवारी कार्यालय या तहसील',
-  ration: 'ग्राम पंचायत या राशन दुकान',
-  income: 'तहसील कार्यालय — Tehsildar',
-  mobile: 'Aadhaar Centre — आधार update के लिए',
-  photo: 'नज़दीकी Photo Studio',
-  marksheet: 'School या College से',
-  bonafide: 'College Administration से',
-  pan: 'NSDL वेबसाइट या Post Office',
-  age: 'ग्राम पंचायत या नगर पालिका',
-  marriage: 'तहसील कार्यालय — Tehsildar',
-  business_reg: 'udyamregistration.gov.in',
-  default: 'नज़दीकी सरकारी कार्यालय',
+const docLocationMap: Record<string, Record<UiLang, string>> = {
+  aadhaar: { 'hi-IN': 'आधार केंद्र या Post Office', 'mr-IN': 'आधार केंद्र किंवा पोस्ट ऑफिस', 'en-IN': 'Aadhaar Centre or Post Office' },
+  passbook: { 'hi-IN': 'नज़दीकी बैंक शाखा', 'mr-IN': 'जवळची बँक शाखा', 'en-IN': 'Nearest bank branch' },
+  khasra: { 'hi-IN': 'पटवारी कार्यालय या तहसील', 'mr-IN': 'तलाठी कार्यालय किंवा तहसील', 'en-IN': 'Patwari office or Tehsil office' },
+  ration: { 'hi-IN': 'ग्राम पंचायत या राशन दुकान', 'mr-IN': 'ग्रामपंचायत किंवा रेशन दुकान', 'en-IN': 'Gram Panchayat or ration shop' },
+  income: { 'hi-IN': 'तहसील कार्यालय', 'mr-IN': 'तहसील कार्यालय', 'en-IN': 'Tehsil office' },
+  mobile: { 'hi-IN': 'आधार केंद्र — आधार update के लिए', 'mr-IN': 'आधार केंद्र — आधार अपडेटसाठी', 'en-IN': 'Aadhaar Centre — to update Aadhaar' },
+  photo: { 'hi-IN': 'नज़दीकी फोटो स्टूडियो', 'mr-IN': 'जवळचा फोटो स्टुडिओ', 'en-IN': 'Nearest photo studio' },
+  marksheet: { 'hi-IN': 'स्कूल या कॉलेज से', 'mr-IN': 'शाळा किंवा कॉलेजमधून', 'en-IN': 'From your school or college' },
+  bonafide: { 'hi-IN': 'कॉलेज प्रशासन से', 'mr-IN': 'कॉलेज प्रशासनाकडून', 'en-IN': 'From your college administration' },
+  pan: { 'hi-IN': 'NSDL वेबसाइट या Post Office', 'mr-IN': 'NSDL वेबसाइट किंवा पोस्ट ऑफिस', 'en-IN': 'NSDL website or Post Office' },
+  age: { 'hi-IN': 'ग्राम पंचायत या नगर पालिका', 'mr-IN': 'ग्रामपंचायत किंवा नगरपालिका', 'en-IN': 'Gram Panchayat or municipal office' },
+  marriage: { 'hi-IN': 'तहसील कार्यालय', 'mr-IN': 'तहसील कार्यालय', 'en-IN': 'Tehsil office' },
+  business_reg: { 'hi-IN': 'udyamregistration.gov.in पर', 'mr-IN': 'udyamregistration.gov.in वर', 'en-IN': 'At udyamregistration.gov.in' },
+  default: { 'hi-IN': 'नज़दीकी सरकारी कार्यालय', 'mr-IN': 'जवळचे सरकारी कार्यालय', 'en-IN': 'Nearest government office' },
 };
 
 type DocumentItem = (typeof documentData)[SchemeCategory][number];
 
 function getSchemesForQuery(query: string): SchemeCategory {
   const q = query.toLowerCase();
-  if (q.includes('किसान') || q.includes('kisan') || q.includes('farmer') || q.includes('खेती') || q.includes('fasal') || q.includes('फसल') || q.includes('किसान कर्ज़')) return 'farmer';
-  if (q.includes('महिला') || q.includes('women') || q.includes('woman') || q.includes('widow') || q.includes('विधवा') || q.includes('beti') || q.includes('maternity')) return 'women';
-  if (q.includes('student') || q.includes('छात्र') || q.includes('पढ़ाई') || q.includes('scholarship') || q.includes('शिक्षा') || q.includes('education') || q.includes('बच्चों की पढ़ाई')) return 'student';
-  if (q.includes('घर') || q.includes('housing') || q.includes('awas') || q.includes('home') || q.includes('makaan') || q.includes('घर की मदद')) return 'housing';
-  if (q.includes('pension') || q.includes('पेंशन') || q.includes('बुज़ुर्ग') || q.includes('senior') || q.includes('old age')) return 'senior';
-  if (q.includes('business') || q.includes('loan') || q.includes('mudra') || q.includes('कर्ज़') || q.includes('उद्योग')) return 'business';
-  if (q.includes('दवाइयाँ') || q.includes('health') || q.includes('hospital') || q.includes('ayushman') || q.includes('इलाज')) return 'senior';
+  if (q.includes('किसान') || q.includes('kisan') || q.includes('farmer') || q.includes('खेती') || q.includes('fasal') || q.includes('फसल') || q.includes('किसान कर्ज़') || q.includes('शेतकरी') || q.includes('शेती')) return 'farmer';
+  if (q.includes('महिला') || q.includes('women') || q.includes('woman') || q.includes('widow') || q.includes('विधवा') || q.includes('beti') || q.includes('maternity') || q.includes('घरासाठी') || q.includes('मुलगी')) return 'women';
+  if (q.includes('student') || q.includes('छात्र') || q.includes('पढ़ाई') || q.includes('scholarship') || q.includes('शिक्षा') || q.includes('education') || q.includes('बच्चों की पढ़ाई') || q.includes('विद्यार्थी') || q.includes('शिक्षण') || q.includes('मुलांचे')) return 'student';
+  if (q.includes('घर') || q.includes('housing') || q.includes('awas') || q.includes('home') || q.includes('makaan') || q.includes('घर की मदद') || q.includes('घरासाठी मदत')) return 'housing';
+  if (q.includes('pension') || q.includes('पेंशन') || q.includes('बुज़ुर्ग') || q.includes('senior') || q.includes('old age') || q.includes('ज्येष्ठ') || q.includes('वृद्ध')) return 'senior';
+  if (q.includes('business') || q.includes('loan') || q.includes('mudra') || q.includes('कर्ज़') || q.includes('उद्योग') || q.includes('कर्ज') || q.includes('व्यवसाय')) return 'business';
+  if (q.includes('दवाइयाँ') || q.includes('health') || q.includes('hospital') || q.includes('ayushman') || q.includes('इलाज') || q.includes('औषध') || q.includes('आरोग्य')) return 'senior';
   return 'farmer';
 }
 
@@ -622,6 +885,7 @@ function DocVisualCard({
   getTime,
   ui,
   resp,
+  lang,
 }: {
   doc: DocumentItem;
   status: DocCheckStatus;
@@ -630,13 +894,17 @@ function DocVisualCard({
   getTime: () => string;
   ui: UiStringsBundle;
   resp: typeof botResponses[UiLang];
+  lang: UiLang;
 }) {
   const borderColor = status === 'yes' ? '#1A6B3C' : status === 'no' ? '#DC2626' : '#E7E0D8';
   const nameColor = status === 'yes' ? '#1A6B3C' : status === 'no' ? '#DC2626' : '#1C1917';
-  const firstChar = Array.from(doc.nameHindi)[0] ?? '?';
+  const docName = getDocName(doc, lang);
+  const docTip = getDocTip(doc, lang);
+  const firstChar = Array.from(docName)[0] ?? '?';
 
   const handleWhereClick = () => {
-    const loc = docLocationMap[doc.id] ?? docLocationMap.default;
+    const locMap = docLocationMap[doc.id] ?? docLocationMap.default;
+    const loc = locMap[lang] ?? locMap['hi-IN'];
     addMsg({ type: 'bot', text: resp.docWhere(loc), timestamp: getTime() });
   };
 
@@ -653,7 +921,7 @@ function DocVisualCard({
         </div>
         <img
           src={doc.imgSrc}
-          alt={doc.nameHindi}
+          alt={docName}
           onError={(e) => { e.currentTarget.style.display = 'none'; }}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 1 }}
         />
@@ -680,10 +948,9 @@ function DocVisualCard({
       </div>
       <div className="px-[9px] py-2">
         <span className="text-[12px] font-extrabold block mb-px" style={{ color: nameColor }}>
-          {doc.nameHindi}
+          {docName}
         </span>
-        <span className="text-[10px] text-[#A8A29E] block mb-0.5">{doc.nameEnglish}</span>
-        <span className="text-[9px] text-[#78716C] leading-[1.4] block mb-1.5">{doc.tip}</span>
+        <span className="text-[9px] text-[#78716C] leading-[1.4] block mb-1.5">{docTip}</span>
         {doc.required && (
           <div className="flex items-center gap-1 mb-1">
             <span className="w-1 h-1 rounded-full bg-[#DC2626]" />
@@ -732,6 +999,7 @@ function DocCheckCard({
   setScriptLang,
   ui,
   resp,
+  lang,
 }: {
   category: SchemeCategory;
   docCheckState: Record<string, DocCheckStatus>;
@@ -743,6 +1011,7 @@ function DocCheckCard({
   setScriptLang: Dispatch<SetStateAction<ScriptLang>>;
   ui: UiStringsBundle;
   resp: typeof botResponses[UiLang];
+  lang: UiLang;
 }) {
   const docs = documentData[category] || documentData.farmer;
   const checkedCount = Object.values(docCheckState).filter((v) => v === 'yes').length;
@@ -797,6 +1066,7 @@ function DocCheckCard({
               getTime={getTime}
               ui={ui}
               resp={resp}
+              lang={lang}
             />
           ))}
         </div>
@@ -820,7 +1090,7 @@ function DocCheckCard({
                             <polyline points="1 5 4 8 9 2" />
                           </svg>
                         </span>
-                        <span className="text-[12px] text-[#15803D] font-semibold">{d.nameHindi}</span>
+                        <span className="text-[12px] text-[#15803D] font-semibold">{getDocName(d, lang)}</span>
                       </div>
                     ))}
                 </div>
@@ -877,10 +1147,10 @@ function DocCheckCard({
                         <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3.05h16.94a2 2 0 0 0 1.71-3.05L13.71 3.86a2 2 0 0 0-3.42 0z" />
                       </svg>
                       <span className="text-[12px] text-[#92400E] font-bold">
-                        {d.nameHindi}
+                        {getDocName(d, lang)}
                         <span className="text-[11px] text-[#A8A29E] font-normal">
                           {' '}
-                          → {docLocationMap[d.id] ?? docLocationMap.default}
+                          → {(docLocationMap[d.id] ?? docLocationMap.default)[lang]}
                         </span>
                       </span>
                     </li>
@@ -891,7 +1161,7 @@ function DocCheckCard({
                   className="w-full bg-[#D97706] text-white rounded-[9px] py-2.5 text-[13px] font-bold border-none cursor-pointer"
                   onClick={() =>
                     window.open(
-                      `https://www.google.com/maps/search/${encodeURIComponent(docLocationMap[missingDocs[0].id] ?? docLocationMap.default)}`,
+                      `https://www.google.com/maps/search/${encodeURIComponent((docLocationMap[missingDocs[0].id] ?? docLocationMap.default)[lang])}`,
                       '_blank'
                     )
                   }
@@ -1113,7 +1383,7 @@ export default function SimpleModePage() {
     addMsg({ type: 'schemes', category, timestamp: getTime() })
     const lang = selectedLangRef.current as UiLang;
     const schemes = schemeData[category] || schemeData.farmer;
-    const names = schemes.slice(0, 3).map(s => s.nameHindi).join(', ');
+    const names = schemes.slice(0, 3).map(s => getSchemeName(s, lang)).join(', ');
     const summaryTexts: Record<UiLang, string> = {
       'hi-IN': `आपके लिए ${schemes.length} योजनाएं मिलीं: ${names}`,
       'mr-IN': `तुमच्यासाठी ${schemes.length} योजना सापडल्या: ${names}`,
@@ -1126,7 +1396,8 @@ export default function SimpleModePage() {
   }, 1800)
 
     setTimeout(() => {
-      addMsg({ type: 'bot', text: resp.recommendation(firstEligible.nameHindi), timestamp: getTime() })
+      const curLang = selectedLangRef.current as UiLang;
+      addMsg({ type: 'bot', text: resp.recommendation(getSchemeName(firstEligible, curLang)), timestamp: getTime() })
     }, 2600)
 
     setTimeout(() => {
@@ -1141,13 +1412,31 @@ export default function SimpleModePage() {
   }, 3400)
 }, [addMsg]);
 
+  const ui = uiStrings[selectedLang as UiLang] || uiStrings['hi-IN'];
+  const lang = resolveUiLang(selectedLang);
+
   const openWhatsAppWithSchemes = () => {
-    const lines = matchedSchemes.map((s: SchemeItem) => `• ${s.nameHindi}: ${s.amount} (${s.unit})`).join('\n');
-    const text = `SuvidhaAI योजनाएँ:\n${lines}`;
+    const lines = matchedSchemes.map((s: SchemeItem) => `• ${getSchemeName(s, lang)}: ${s.amount} (${getSchemeUnit(s, lang)})`).join('\n');
+    const text = `${ui.whatsappHeader}\n${lines}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
 
-  const ui = uiStrings[selectedLang as UiLang] || uiStrings['hi-IN'];
+  const handleLanguageChange = (newLang: string) => {
+    window.speechSynthesis?.cancel();
+    setSelectedLang(newLang);
+    selectedLangRef.current = newLang;
+    setMessages([]);
+    setConversationStage('greeting');
+    setIsTyping(false);
+    setInputText('');
+    setExpandedCard(null);
+    setDocCheckState({});
+    setDocCheckCategory('');
+    setShowPincodeInput(false);
+    setPincodeText('');
+    hasSpokenGreetingRef.current = false;
+    setTimeout(() => startGreeting(), 300);
+  };
 
   return (
     <div className="h-screen grid grid-cols-[220px_1fr] bg-[#FAF7F2] min-h-0" style={{ fontFamily: 'var(--font-mukta)' }}>
@@ -1257,7 +1546,7 @@ export default function SimpleModePage() {
               color: 'rgba(255,255,255,0.5)', 
               textAlign: 'center' 
             }}>
-              Home
+              {ui.homeLabel}
             </span>
           </button>
 
@@ -1282,7 +1571,7 @@ export default function SimpleModePage() {
 
           <div className="ml-auto bg-[rgba(0,0,0,0.2)] rounded-full p-[3px] flex items-center">
             <span className="bg-white text-[#1A6B3C] text-[11px] font-bold px-3 py-1 rounded-full">{ui.simpleMode}</span>
-            <button className="text-[11px] text-[rgba(255,255,255,0.6)] px-3 py-1" onClick={() => alert('Full Mode — Coming Soon')}>
+            <button className="text-[11px] text-[rgba(255,255,255,0.6)] px-3 py-1" onClick={() => router.push('/full')}>
               {ui.detailedMode}
             </button>
           </div>
@@ -1295,12 +1584,12 @@ export default function SimpleModePage() {
           </button>
           <select
             value={selectedLang}
-            onChange={(e) => setSelectedLang(e.target.value)}
+            onChange={(e) => handleLanguageChange(e.target.value)}
             className="bg-[rgba(255,255,255,0.12)] border border-[rgba(255,255,255,0.2)] rounded-[5px] py-1 px-2 text-[11px] font-bold text-white cursor-pointer outline-none"
             style={{ fontFamily: 'var(--font-mukta)' }}
           >
-            <option value="hi-IN">Hindi</option>
-            <option value="mr-IN">Marathi</option>
+            <option value="hi-IN">हिंदी</option>
+            <option value="mr-IN">मराठी</option>
             <option value="en-IN">English</option>
           </select>
           <button
@@ -1373,7 +1662,13 @@ export default function SimpleModePage() {
               return (
                 <div key={message.id} className="self-start w-full">
                   <div className="simple-scroll flex gap-[14px] overflow-x-auto px-1 pt-1 pb-3">
-                    {schemeData[message.category].map((scheme) => (
+                    {schemeData[message.category].map((scheme) => {
+                      const schemeName = getSchemeName(scheme, lang);
+                      const schemeUnit = getSchemeUnit(scheme, lang);
+                      const schemeDesc = getSchemeDesc(scheme, lang);
+                      const schemeWarning = getSchemeWarning(scheme, lang);
+                      const schemeSteps = getSchemeSteps(scheme, lang);
+                      return (
                       <div key={scheme.id} className="flex flex-col items-start shrink-0 cursor-pointer transition-transform duration-200 hover:-translate-y-[3px]">
                         <div className="h-3 w-20 rounded-[6px_6px_0_0]" style={{ backgroundColor: scheme.headerColor }} />
                         <div
@@ -1382,13 +1677,13 @@ export default function SimpleModePage() {
                         >
                           <div className="h-16 py-[10px] px-3 flex items-center gap-[9px]" style={{ backgroundColor: scheme.headerColor }}>
                             <div className="w-9 h-9 bg-white rounded-full overflow-hidden border-[1.5px] border-[rgba(255,255,255,0.4)] shrink-0 flex items-center justify-center">
-                              <Image src={scheme.logo} alt={scheme.nameHindi} width={32} height={32} style={{ objectFit: 'contain' }} />
+                              <Image src={scheme.logo} alt={schemeName} width={32} height={32} style={{ objectFit: 'contain' }} />
                             </div>
-                            <div className="text-[13px] leading-[1.25] text-white font-bold flex-1">{scheme.nameHindi}</div>
+                            <div className="text-[13px] leading-[1.25] text-white font-bold flex-1">{schemeName}</div>
                             {scheme.eligible ? (
-                              <span className="text-[9px] font-bold py-[2px] px-[7px] rounded-full bg-[#F0FDF4] border border-[#BBF7D0] text-[#15803D] whitespace-nowrap">✓ Eligible</span>
+                              <span className="text-[9px] font-bold py-[2px] px-[7px] rounded-full bg-[#F0FDF4] border border-[#BBF7D0] text-[#15803D] whitespace-nowrap">{ui.eligibleBadge}</span>
                             ) : (
-                              <span className="text-[9px] font-bold py-[2px] px-[7px] rounded-full bg-[#FFFBEB] border border-[#FDE68A] text-[#92400E] whitespace-nowrap">⚠ Verify</span>
+                              <span className="text-[9px] font-bold py-[2px] px-[7px] rounded-full bg-[#FFFBEB] border border-[#FDE68A] text-[#92400E] whitespace-nowrap">{ui.verifyBadge}</span>
                             )}
                           </div>
 
@@ -1415,31 +1710,30 @@ export default function SimpleModePage() {
                                     <line x1="9" y1="3" x2="3" y2="9" />
                                   </svg>
                                 )}
-                                <div className="text-[7px] font-bold uppercase leading-none mt-0.5">पात्र</div>
-                                <div className="text-[8px] font-bold leading-none mt-0.5">Eligible</div>
+                                <div className="text-[8px] font-bold leading-none mt-0.5">{ui.eligibleBadge.replace('✓ ', '')}</div>
                               </div>
                             </div>
-                            <div className="text-[13px] font-bold text-[#57534E] mt-0.5">{scheme.unit}</div>
-                            <div className="text-[11px] text-[#78716C] leading-[1.5] mt-1">{scheme.desc}</div>
+                            <div className="text-[13px] font-bold text-[#57534E] mt-0.5">{schemeUnit}</div>
+                            <div className="text-[11px] text-[#78716C] leading-[1.5] mt-1">{schemeDesc}</div>
 
-                            {scheme.warning && (
+                            {schemeWarning && (
                               <div className="mt-2 bg-[#FFFBEB] border border-[#FDE68A] rounded-[6px] py-[7px] px-[9px] flex gap-[5px] items-start">
                                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2">
                                   <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3.05h16.94a2 2 0 0 0 1.71-3.05L13.71 3.86a2 2 0 0 0-3.42 0z" />
                                 </svg>
-                                <div className="text-[10px] text-[#92400E] leading-[1.4]">{scheme.warning}</div>
+                                <div className="text-[10px] text-[#92400E] leading-[1.4]">{schemeWarning}</div>
                               </div>
                             )}
 
                             <div className="mt-1.5 text-[10px] font-bold" style={{ color: scheme.matchColor }}>
-                              Match status: {scheme.matchLabel}
+                              {ui.matchStatusLabel} {scheme.matchTier === 'high' ? ui.matchHigh : ui.matchMedium}
                             </div>
 
                             <button
                               className="mt-2.5 w-full bg-[#E8690B] text-white border-none rounded-[9px] py-2.5 text-[13px] font-bold hover:bg-[#C2570A] transition-all duration-150"
                               onClick={() => setExpandedCard((prev) => (prev === scheme.id ? null : scheme.id))}
                             >
-                              कैसे मिलेगा?
+                              {ui.howToGet}
                             </button>
 
                             <div
@@ -1450,19 +1744,20 @@ export default function SimpleModePage() {
                                 padding: expandedCard === scheme.id ? '10px 12px' : '0 12px',
                               }}
                             >
-                              <div className="text-[9px] uppercase font-bold text-[#1A6B3C] mb-[7px]">आवेदन के चरण:</div>
-                              {scheme.steps.map((step, idx) => (
+                              <div className="text-[9px] uppercase font-bold text-[#1A6B3C] mb-[7px]">{ui.appStepsLabel}</div>
+                              {schemeSteps.map((step, idx) => (
                                 <div key={step} className="flex gap-[7px] py-1">
                                   <div className="w-5 h-5 rounded-full bg-[#1A6B3C] text-white text-[9px] font-bold shrink-0 flex items-center justify-center">{idx + 1}</div>
                                   <div className="text-[11px] text-[#1C1917] leading-[1.5]">{step}</div>
                                 </div>
                               ))}
-                              <div className="text-[9px] text-[#A8A29E] mt-1.5">दस्तावेज़: आधार, बैंक पासबुक, पहचान पत्र</div>
+                              <div className="text-[9px] text-[#A8A29E] mt-1.5">{ui.documentsLabel} {ui.commonDocsList}</div>
                             </div>
                           </div>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -1534,6 +1829,7 @@ export default function SimpleModePage() {
                   setScriptLang={setScriptLang}
                   ui={ui}
                   resp={botResponses[selectedLangRef.current as UiLang] || botResponses['hi-IN']}
+                  lang={selectedLang as UiLang}
                 />
               );
             }
