@@ -1,0 +1,24 @@
+# Member 3 (Application, Voice & Deployment) — Phase 1 infra deps
+# Shared file: everyone appends their own pinned deps below, don't reorder.
+
+# Web framework / server
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# Settings
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# Database
+sqlalchemy==2.0.36
+alembic==1.14.0
+psycopg[binary]==3.2.3
+pgvector==0.3.6
+
+# Redis
+redis==5.2.1
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.25.0
+httpx==0.28.1
