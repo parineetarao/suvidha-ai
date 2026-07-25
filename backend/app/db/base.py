@@ -11,4 +11,4 @@ class Base(DeclarativeBase):
 # from app.models.application import Application          # Member 3
 # from app.models.document import DocumentVerification     # Member 3
 # from app.models.user import User                         # Member 1
-# from app.models.scheme import Scheme                     # Member 2
+from app.models.scheme import Scheme                     # Member 2

@@ -35,6 +35,6 @@ alembic/versions/__pycache__/
 
 # ML models cache (don't push a 500MB file)
 .cache/
-models/
+/models/
 *.bin
 *.safetensors
