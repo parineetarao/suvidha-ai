@@ -11,6 +11,14 @@ from app.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import engine
 
+from starlette.middleware.sessions import SessionMiddleware
+
+from app.api.v1.auth import router as auth_router
+from app.api.v1.users import router as users_router
+from app.api.v1.admin import router as admin_router
+from app.admin_ui.views import register_admin_views
+from app.db.session import SessionLocal
+
 configure_logging()
 logger = logging.getLogger(__name__)
 
@@ -27,7 +35,15 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    
+    app.add_middleware(SessionMiddleware, secret_key=settings.JWT_SECRET)
 
+    app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(users_router, prefix="/api/v1")
+    app.include_router(admin_router, prefix="/api/v1")
+
+    register_admin_views(app, engine, SessionLocal, settings.JWT_SECRET)
+	
     @app.get("/api/v1/health")
     def health() -> dict:
         db_status = "ok"
@@ -54,8 +70,8 @@ def create_app() -> FastAPI:
             "model_loaded": False,
         }
 
-    # Routers are added one `include_router(...)` line at a time as each
-    # member's api/v1 module lands (Phase 2) — none exist yet.
+    # Member 1 (Identity & Access) routers added above.
+    # Member 2/3 routers land here as their modules are wired in.
 
     return app
 
