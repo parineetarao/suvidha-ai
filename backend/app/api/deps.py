@@ -12,6 +12,12 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from sqlalchemy.orm import Session
 
+# Import app.db.base FIRST — forces every model to finish registering on
+# Base.metadata as a complete step before any individual model class is
+# imported directly below. Same circular-import fix confirmed working in
+# scripts/create_admin.py.
+import app.db.base  # noqa: F401
+
 from app.core.exceptions import InsufficientRole, TokenExpired
 from app.core.security import decode_access_token
 from app.db.session import SessionLocal
