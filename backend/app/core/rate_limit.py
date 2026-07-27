@@ -33,7 +33,7 @@ def _get_redis() -> redis.Redis:
         # instead of bytes — otherwise every read would need a manual
         # .decode("utf-8"), which is easy to forget in exactly one place
         # and get a confusing bytes-vs-str bug later.
-        _redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        _redis_client = redis.from_url(settings.redis_url, decode_responses=True)
     return _redis_client
 
 

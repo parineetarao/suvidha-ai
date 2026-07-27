@@ -209,7 +209,7 @@ def _issue_refresh_token(db: Session, user_id: uuid.UUID) -> str:
     refresh_token = RefreshToken(
         user_id=user_id,
         token_hash=hash_refresh_token(raw_token),
-        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_TTL_DAYS),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.jwt_refresh_ttl_days),
     )
     db.add(refresh_token)
     return raw_token

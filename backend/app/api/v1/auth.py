@@ -44,7 +44,7 @@ def _set_refresh_cookie(response: Response, raw_refresh_token: str) -> None:
         httponly=True,   # JavaScript on the frontend can never read this
         secure=True,      # only ever sent over HTTPS
         samesite="strict",  # never attached to a cross-site request — blocks CSRF on this cookie
-        max_age=settings.JWT_REFRESH_TTL_DAYS * 24 * 60 * 60,
+        max_age=settings.jwt_refresh_ttl_days * 24 * 60 * 60,
         path=_REFRESH_COOKIE_PATH,
     )
 

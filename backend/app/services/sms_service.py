@@ -44,7 +44,7 @@ async def send_otp(mobile_number: str, code: str) -> bool:
     MSG91's response, not just this one. httpx is the async-native
     equivalent of requests, built for exactly this situation.
     """
-    if settings.SMS_MODE == "mock":
+    if settings.sms_mode == "mock":
         return _send_mock(mobile_number, code)
     return await _send_live(mobile_number, code)
 
@@ -68,9 +68,9 @@ async def _send_live(mobile_number: str, code: str) -> bool:
     free-text SMS content.
     """
     payload = {
-        "template_id": settings.MSG91_TEMPLATE_ID,
+        "template_id": settings.msg91_template_id,
         "mobile": f"91{mobile_number}",
-        "authkey": settings.MSG91_API_KEY,
+        "authkey": settings.msg91_api_key,
         "otp": code,
     }
 

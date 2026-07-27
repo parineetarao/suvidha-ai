@@ -36,13 +36,13 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     
-    app.add_middleware(SessionMiddleware, secret_key=settings.JWT_SECRET)
+    app.add_middleware(SessionMiddleware, secret_key=settings.jwt_secret)
 
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(users_router, prefix="/api/v1")
     app.include_router(admin_router, prefix="/api/v1")
 
-    register_admin_views(app, engine, SessionLocal, settings.JWT_SECRET)
+    register_admin_views(app, engine, SessionLocal, settings.jwt_secret)
 	
     @app.get("/api/v1/health")
     def health() -> dict:

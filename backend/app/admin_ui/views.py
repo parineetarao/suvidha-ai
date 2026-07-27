@@ -131,7 +131,6 @@ class AdminAdminView(ModelView, model=Admin):
     name_plural = "Admins"
     icon = "fa-solid fa-user-shield"
     column_list = [Admin.id, Admin.email, Admin.role, Admin.is_active, Admin.created_at]
-    column_exclude_list = [Admin.hashed_password]  # never render the hash, even read-only
     can_create = False
     can_edit = False
     can_delete = False
@@ -142,7 +141,7 @@ def register_admin_views(app, engine, session_factory: sessionmaker, secret_key:
     Called once from main.py at startup:
 
         from app.admin_ui.views import register_admin_views
-        register_admin_views(app, engine, SessionLocal, settings.JWT_SECRET)
+        register_admin_views(app, engine, SessionLocal, settings.jwt_secret)
 
     Reusing settings.JWT_SECRET as the session-signing secret rather than
     introducing a second secret is a reasonable simplification here (one

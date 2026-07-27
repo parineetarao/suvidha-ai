@@ -82,7 +82,7 @@ def hash_otp(code: str, mobile_number: str) -> str:
     hashes differently — prevents a rainbow-table-style shortcut across
     the whole user base.
     """
-    raw = f"{code}{mobile_number}{settings.OTP_PEPPER}"
+    raw = f"{code}{mobile_number}{settings.otp_pepper}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -109,7 +109,7 @@ def create_access_token(user_id: str, roles: list[str] | None = None) -> str:
         token format. Cheap to add now, expensive to retrofit later.
     """
     now = datetime.now(timezone.utc)
-    expire = now + timedelta(minutes=settings.JWT_ACCESS_TTL_MIN)
+    expire = now + timedelta(minutes=settings.jwt_access_ttl_min)
 
     claims = {
         "sub": user_id,
@@ -118,7 +118,7 @@ def create_access_token(user_id: str, roles: list[str] | None = None) -> str:
         "exp": expire,
         "jti": str(uuid.uuid4()),
     }
-    return jwt.encode(claims, settings.JWT_SECRET, algorithm="HS256")
+    return jwt.encode(claims, settings.jwt_secret, algorithm="HS256")
 
 
 def decode_access_token(token: str) -> dict:
@@ -131,7 +131,7 @@ def decode_access_token(token: str) -> dict:
     to catch JWTError and turn it into an HTTP 401 (via core/exceptions.py),
     keeping this module free of HTTP concerns.
     """
-    return jwt.decode(token, settings.JWT_SECRET, algorithms=["HS256"])
+    return jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
 
 
 # ---------------------------------------------------------------------------
