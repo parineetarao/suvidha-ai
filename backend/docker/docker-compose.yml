@@ -39,6 +39,8 @@ services:
       - "8000:8000"
     volumes:
       - ../alembic:/app/alembic
+      - ../app:/app/app
+      - ../templates:/app/templates
     depends_on:
       postgres:
         condition: service_healthy
