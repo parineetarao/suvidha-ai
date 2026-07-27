@@ -1,38 +1,32 @@
 """CLI to create an admin user.
 
-BLOCKED on Member 1's app/models/user.py — the User model (email,
-hashed_password, is_admin, or whatever shape Member 1 lands on) doesn't
-exist yet. Everything up to the actual row insert is wired below; once
-the model exists, replace the TODO block in create_admin() with the real
-User(...) construction and password hashing call.
+Wired to Member 1's app/models/admin.py (Admin, AdminRole) now that it
+exists on main. New admins default to VIEWER — the least-privileged role —
+so promoting to SCHEME_EDITOR or SUPER_ADMIN is a deliberate follow-up step
+via the admin panel, never a side effect of running this script.
 """
 
 import argparse
 import getpass
 import sys
 
+from app.core.security import hash_password
 from app.db.session import SessionLocal
+from app.models.admin import Admin, AdminRole
 
 
-def create_admin(email: str, password: str) -> None:
+def create_admin(email: str, password: str, role: AdminRole = AdminRole.VIEWER) -> None:
     db = SessionLocal()
     try:
-        # TODO(blocked on Member 1's app/models/user.py):
-        # from app.models.user import User
-        # from app.core.security import hash_password
-        #
-        # existing = db.query(User).filter(User.email == email).first()
-        # if existing:
-        #     print(f"User {email} already exists.")
-        #     return
-        # admin = User(email=email, hashed_password=hash_password(password), is_admin=True)
-        # db.add(admin)
-        # db.commit()
-        # print(f"Admin user {email} created.")
-        raise NotImplementedError(
-            "Blocked on Member 1's User model (app/models/user.py) — "
-            "see the TODO in create_admin() for what to wire up."
-        )
+        existing = db.query(Admin).filter(Admin.email == email).first()
+        if existing:
+            print(f"Admin {email} already exists.")
+            return
+
+        admin = Admin(email=email, hashed_password=hash_password(password), role=role)
+        db.add(admin)
+        db.commit()
+        print(f"Admin user {email} created with role {role.value}.")
     finally:
         db.close()
 
