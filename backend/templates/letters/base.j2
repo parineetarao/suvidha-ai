@@ -1,0 +1,30 @@
+{% block header %}
+Date: {{ today.strftime('%d %B %Y') }}
+
+To,
+The Concerned Officer,
+{{ scheme_name }}
+{% if ministry %}
+{{ ministry }}
+{% endif %}
+
+Subject: Application for {{ scheme_name }}{% if reference_number %} (Ref: {{ reference_number }}){% endif %}
+
+Respected Sir/Madam,
+{% endblock %}
+
+{% block body %}
+I, {{ applicant_name }}, wish to apply for the benefits under {{ scheme_name }}. I request you to kindly process my application and provide the necessary assistance as per the scheme's provisions.
+{% endblock %}
+
+{% block footer %}
+I hereby declare that the information provided by me is true to the best of my knowledge and belief.
+
+Thanking you,
+
+Yours faithfully,
+{{ applicant_name }}
+{% if district %}
+{{ district }}{% if state_code %}, {{ state_code }}{% endif %}
+{% endif %}
+{% endblock %}
