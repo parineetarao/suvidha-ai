@@ -9,7 +9,9 @@ import argparse
 import getpass
 import sys
 
+from app.core.security import hash_password
 from app.db.session import SessionLocal
+from app.models.admin import Admin, AdminRole
 
 # Import app.db.base FIRST, before any specific model class — this forces
 # every model to finish registering on Base.metadata as a complete,
@@ -18,9 +20,6 @@ from app.db.session import SessionLocal
 # import. See db/base.py's docstring, and Member 2's note about hitting
 # this same circular import on their own model.
 import app.db.base  # noqa: F401
-
-from app.models.admin import Admin, AdminRole
-from app.core.security import hash_password
 
 
 def create_admin(email: str, password: str, role: str = "super_admin") -> None:
