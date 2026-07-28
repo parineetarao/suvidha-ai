@@ -8,6 +8,11 @@ REVISION NOTE: originally used one column per language (name_hi, name_mr, ...).
 Redesigned to a single JSONB `translations` column to support 10 languages
 without a schema migration every time a language is added. See
 SUPPORTED_LANGUAGES below for the canonical list.
+
+REVISION NOTE 2: added `warning` and `rejection_risks` — the frontend had
+this content per scheme (in 3 languages) with nowhere for it to live in the
+original model. matching_service.py needs real per-scheme risk data, not
+just a generic "hard to get documents" heuristic.
 """
 
 import uuid
@@ -85,6 +90,28 @@ class Scheme(Base):
     application_modes: Mapped[list[str]] = mapped_column(
         ARRAY(String(30)), default=list
     )  # online / offline / csc
+
+    # A single standout caution for this scheme (e.g. "Aadhaar must be linked
+    # to bank account before applying"). English here; translated versions
+    # live under translations[lang]["warning"]. Added specifically to close
+    # the gap flagged while porting seed data: the frontend already had this
+    # per scheme in 3 languages and the model had nowhere to put it.
+    warning: Mapped[str | None] = mapped_column(Text)
+
+    # Shape: [{"risk": "...", "fix": "..."}, ...]. English only for now —
+    # translating rejection_risks per language is future work, not blocking.
+    rejection_risks: Mapped[list[dict]] = mapped_column(JSONB, default=list)
+
+    # --- Added after inspecting real myScheme page structure ---------------
+    # The real site's "Eligibility" section is free-form paragraph text, not
+    # structured data — we can't reliably auto-parse it into eligibility_rules
+    # (income caps, occupation lists, etc). This stores the real text verbatim
+    # for citizens to read; eligibility_rules stays a separate, structured,
+    # best-effort/manually-curated field used for actual filtering logic.
+    eligibility_text: Mapped[str | None] = mapped_column(Text)
+    application_process: Mapped[str | None] = mapped_column(Text)
+    # Shape: [{"question": "...", "answer": "..."}, ...]
+    faqs: Mapped[list[dict]] = mapped_column(JSONB, default=list)
 
     application_url: Mapped[str | None] = mapped_column(Text)
     source_url: Mapped[str | None] = mapped_column(Text)
