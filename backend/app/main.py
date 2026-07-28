@@ -13,6 +13,14 @@ from app.db.session import engine
 from app.api.v1.schemes import router as schemes_router
 from app.services.embedding_service import embedding_service
 
+from starlette.middleware.sessions import SessionMiddleware
+
+from app.api.v1.auth import router as auth_router
+from app.api.v1.users import router as users_router
+from app.api.v1.admin import router as admin_router
+from app.admin_ui.views import register_admin_views
+from app.db.session import SessionLocal
+
 configure_logging()
 logger = logging.getLogger(__name__)
 
@@ -36,7 +44,15 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    
+    app.add_middleware(SessionMiddleware, secret_key=settings.jwt_secret)
 
+    app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(users_router, prefix="/api/v1")
+    app.include_router(admin_router, prefix="/api/v1")
+
+    register_admin_views(app, engine, SessionLocal, settings.jwt_secret)
+	
     @app.get("/api/v1/health")
     def health() -> dict:
         db_status = "ok"
@@ -64,7 +80,9 @@ def create_app() -> FastAPI:
             "embedding_model_loaded": embedding_service.is_ready,
         }
 
+
     app.include_router(schemes_router, prefix="/api/v1")
+
 
     return app
 

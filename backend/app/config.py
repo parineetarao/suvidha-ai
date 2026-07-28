@@ -28,6 +28,16 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: str = "http://localhost:3000"
 
+    # Member 1 (Identity & Access) — auth/OTP config
+    jwt_secret: str
+    jwt_access_ttl_min: int = 15
+    jwt_refresh_ttl_days: int = 30
+    otp_pepper: str
+
+    sms_mode: str = "mock"
+    msg91_api_key: str = ""
+    msg91_template_id: str = "" 
+
     @property
     def database_url(self) -> str:
         return (
@@ -43,3 +53,5 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+settings = get_settings()

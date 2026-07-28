@@ -1,38 +1,45 @@
 """CLI to create an admin user.
 
-BLOCKED on Member 1's app/models/user.py — the User model (email,
-hashed_password, is_admin, or whatever shape Member 1 lands on) doesn't
-exist yet. Everything up to the actual row insert is wired below; once
-the model exists, replace the TODO block in create_admin() with the real
-User(...) construction and password hashing call.
+Uses Member 1's Admin model (app/models/admin.py) — a separate table
+from citizens' User model, since admins authenticate with email+password
+via bcrypt, not OTP. See models/admin.py's own docstring for why these
+are kept as two distinct tables rather than a User with an is_admin flag.
 """
-
 import argparse
 import getpass
 import sys
 
 from app.db.session import SessionLocal
 
+# Import app.db.base FIRST, before any specific model class — this forces
+# every model to finish registering on Base.metadata as a complete,
+# self-contained step, so the later `from app.models.admin import Admin`
+# below finds an already-fully-loaded module instead of one still mid-
+# import. See db/base.py's docstring, and Member 2's note about hitting
+# this same circular import on their own model.
+import app.db.base  # noqa: F401
 
-def create_admin(email: str, password: str) -> None:
+from app.models.admin import Admin, AdminRole
+from app.core.security import hash_password
+
+
+def create_admin(email: str, password: str, role: str = "super_admin") -> None:
     db = SessionLocal()
     try:
-        # TODO(blocked on Member 1's app/models/user.py):
-        # from app.models.user import User
-        # from app.core.security import hash_password
-        #
-        # existing = db.query(User).filter(User.email == email).first()
-        # if existing:
-        #     print(f"User {email} already exists.")
-        #     return
-        # admin = User(email=email, hashed_password=hash_password(password), is_admin=True)
-        # db.add(admin)
-        # db.commit()
-        # print(f"Admin user {email} created.")
-        raise NotImplementedError(
-            "Blocked on Member 1's User model (app/models/user.py) — "
-            "see the TODO in create_admin() for what to wire up."
+        existing = db.query(Admin).filter(Admin.email == email).first()
+        if existing:
+            print(f"Admin {email} already exists.")
+            return
+
+        admin = Admin(
+            email=email,
+            hashed_password=hash_password(password),
+            role=AdminRole(role),
+            is_active=True,
         )
+        db.add(admin)
+        db.commit()
+        print(f"Admin {email} created with role '{role}'.")
     finally:
         db.close()
 
@@ -40,6 +47,12 @@ def create_admin(email: str, password: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create an admin user")
     parser.add_argument("--email", required=True, help="Admin email address")
+    parser.add_argument(
+        "--role",
+        default="super_admin",
+        choices=["super_admin", "scheme_editor", "viewer"],
+        help="Admin role (default: super_admin)",
+    )
     args = parser.parse_args()
 
     password = getpass.getpass("Admin password: ")
@@ -47,7 +60,7 @@ def main() -> None:
         print("Password cannot be empty.", file=sys.stderr)
         sys.exit(1)
 
-    create_admin(args.email, password)
+    create_admin(args.email, password, args.role)
 
 
 if __name__ == "__main__":
