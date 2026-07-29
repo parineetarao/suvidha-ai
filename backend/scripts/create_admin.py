@@ -1,11 +1,10 @@
 """CLI to create an admin user.
 
-Wired to Member 1's app/models/admin.py (Admin, AdminRole) now that it
-exists on main. New admins default to VIEWER — the least-privileged role —
-so promoting to SCHEME_EDITOR or SUPER_ADMIN is a deliberate follow-up step
-via the admin panel, never a side effect of running this script.
+Uses Member 1's Admin model (app/models/admin.py) — a separate table
+from citizens' User model, since admins authenticate with email+password
+via bcrypt, not OTP. See models/admin.py's own docstring for why these
+are kept as two distinct tables rather than a User with an is_admin flag.
 """
-
 import argparse
 import getpass
 import sys
@@ -14,8 +13,14 @@ from app.core.security import hash_password
 from app.db.session import SessionLocal
 from app.models.admin import Admin, AdminRole
 
+# Import app.db.base FIRST, before any specific model class — forces every
+# model to finish registering on Base.metadata as a complete step, so the
+# import above finds an already-fully-loaded module instead of one still
+# mid-import.
+import app.db.base  # noqa: F401
 
-def create_admin(email: str, password: str, role: AdminRole = AdminRole.VIEWER) -> None:
+
+def create_admin(email: str, password: str, role: str = "super_admin") -> None:
     db = SessionLocal()
     try:
         existing = db.query(Admin).filter(Admin.email == email).first()
@@ -23,10 +28,15 @@ def create_admin(email: str, password: str, role: AdminRole = AdminRole.VIEWER) 
             print(f"Admin {email} already exists.")
             return
 
-        admin = Admin(email=email, hashed_password=hash_password(password), role=role)
+        admin = Admin(
+            email=email,
+            hashed_password=hash_password(password),
+            role=AdminRole(role),
+            is_active=True,
+        )
         db.add(admin)
         db.commit()
-        print(f"Admin user {email} created with role {role.value}.")
+        print(f"Admin {email} created with role '{role}'.")
     finally:
         db.close()
 
@@ -34,6 +44,12 @@ def create_admin(email: str, password: str, role: AdminRole = AdminRole.VIEWER) 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create an admin user")
     parser.add_argument("--email", required=True, help="Admin email address")
+    parser.add_argument(
+        "--role",
+        default="super_admin",
+        choices=["super_admin", "scheme_editor", "viewer"],
+        help="Admin role (default: super_admin)",
+    )
     args = parser.parse_args()
 
     password = getpass.getpass("Admin password: ")
@@ -41,7 +57,7 @@ def main() -> None:
         print("Password cannot be empty.", file=sys.stderr)
         sys.exit(1)
 
-    create_admin(args.email, password)
+    create_admin(args.email, password, args.role)
 
 
 if __name__ == "__main__":
