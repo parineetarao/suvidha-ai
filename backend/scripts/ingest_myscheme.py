@@ -26,6 +26,9 @@ import argparse
 import logging
 
 from app.db.session import SessionLocal
+import app.db.base  # noqa: F401 — import first so base.py's own model
+                      # registration runs before we ask for Scheme directly
+                      # (avoids a circular import — same fix as seed_schemes.py)
 from app.ingestion.eligibility_extractor import extract_eligibility_rules
 from app.ingestion.myscheme_scraper import (
     debug_fetch_rendered_page,
