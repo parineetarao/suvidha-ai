@@ -56,30 +56,10 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index('ix_otp_requests_mobile_expiry', 'otp_requests', ['mobile_number', 'expires_at'], unique=False)
-    op.create_table('schemes',
-    sa.Column('id', sa.UUID(), nullable=False),
-    sa.Column('scheme_code', sa.String(length=50), nullable=False),
-    sa.Column('name', sa.String(length=300), nullable=False),
-    sa.Column('description', sa.Text(), nullable=True),
-    sa.Column('benefits', sa.Text(), nullable=True),
-    sa.Column('ministry', sa.String(length=200), nullable=True),
-    sa.Column('category', sa.String(length=80), nullable=True),
-    sa.Column('translations', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-    sa.Column('eligibility_rules', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-    sa.Column('documents_required', sa.ARRAY(sa.String()), nullable=False),
-    sa.Column('application_modes', sa.ARRAY(sa.String(length=30)), nullable=False),
-    sa.Column('application_url', sa.Text(), nullable=True),
-    sa.Column('source_url', sa.Text(), nullable=True),
-    sa.Column('last_verified_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('is_published', sa.Boolean(), nullable=False),
-    sa.Column('embedding', pgvector.sqlalchemy.vector.VECTOR(dim=384), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_schemes_category'), 'schemes', ['category'], unique=False)
-    op.create_index(op.f('ix_schemes_scheme_code'), 'schemes', ['scheme_code'], unique=True)
-    op.create_index('scheme_embedding_idx', 'schemes', ['embedding'], unique=False, postgresql_using='ivfflat', postgresql_with={'lists': 100}, postgresql_ops={'embedding': 'vector_cosine_ops'})
+    op.drop_index('scheme_embedding_idx', table_name='schemes', postgresql_using='ivfflat', postgresql_with={'lists': 100}, postgresql_ops={'embedding': 'vector_cosine_ops'})
+    op.drop_index(op.f('ix_schemes_scheme_code'), table_name='schemes')
+    op.drop_index(op.f('ix_schemes_category'), table_name='schemes')
+    op.drop_table('schemes')
     op.create_table('users',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('mobile_number', sa.String(length=15), nullable=False),

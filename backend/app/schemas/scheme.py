@@ -44,6 +44,15 @@ class Translation(BaseModel):
     name: str | None = None
     description: str | None = None
     benefits: str | None = None
+    warning: str | None = None
+
+
+class RejectionRisk(BaseModel):
+    """One reason an application to this scheme commonly gets rejected,
+    and how to avoid it. English only for now — see model revision note."""
+
+    risk: str
+    fix: str
 
 
 class MatchReason(BaseModel):
@@ -85,6 +94,8 @@ class SchemeDetail(SchemeOut):
     application_url: str | None = None
     source_url: str | None = None
     last_verified_at: datetime | None = None
+    warning: str | None = None
+    rejection_risks: list[RejectionRisk] = Field(default_factory=list)
     available_languages: list[LanguageCode] = Field(
         default_factory=list,
         description="Which languages this scheme currently has a translation for.",
