@@ -31,6 +31,6 @@ from app.models.refresh_token import RefreshToken     # noqa: E402, F401
 # --- Member 2 (Scheme Discovery) ---
 from app.models.scheme import Scheme                   # noqa: E402, F401
 
-# --- Member 3 (Application / Voice) — not yet built, uncomment as they land ---
-# from app.models.application import Application
-# from app.models.document import DocumentVerification
+# --- Member 3 (Application / Voice) ---
+from app.models.application import Application, ApplicationStatusHistory  # noqa: E402, F401
+from app.models.document import DocumentVerification                       # noqa: E402, F401
