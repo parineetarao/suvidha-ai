@@ -46,7 +46,7 @@ def ingest_scheme(db, slug: str) -> bool:
     draft. Returns True on success, False if this one scheme failed —
     a single bad scheme should not abort the whole batch."""
     try:
-        html = debug_fetch_rendered_page(slug)
+        html = debug_fetch_rendered_page(slug, save_debug_copy=False)
         scraped = scrape_scheme(html, slug)
     except Exception:
         logger.exception("Failed to scrape slug '%s' — skipping.", slug)
@@ -97,12 +97,13 @@ def ingest_scheme(db, slug: str) -> bool:
     return True
 
 
-def run(pages: int) -> None:
+def run(pages: int, start_page: int = 1) -> None:
     embedding_service.load()
 
-    logger.info("Discovering scheme slugs across %d page(s)...", pages)
-    slugs = list_scheme_slugs(max_pages=pages)
-    logger.info("Found %d unique slugs. Beginning ingestion...", len(slugs))
+    logger.info("Discovering scheme slugs from page %d to %d...", start_page, start_page + pages - 1)
+    all_slugs = list_scheme_slugs(max_pages=start_page + pages - 1)
+    slugs = all_slugs[(start_page - 1) * 10:]  # skip slugs from pages before start_page
+    logger.info("Found %d slug(s) to process (skipped first %d already-covered slugs).", len(slugs), (start_page - 1) * 10)
 
     db = SessionLocal()
     succeeded, failed = 0, 0
@@ -119,11 +120,13 @@ def run(pages: int) -> None:
 
     logger.info("Batch complete: %d succeeded, %d failed, out of %d total.", succeeded, failed, len(slugs))
     logger.info("All inserted as DRAFTS (is_published=False) — review before publishing.")
+    logger.info("If this run was interrupted, resume with: --pages %d --start-page %d (adjust based on last logged [i/N]).", pages, start_page)
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(description="Batch-ingest schemes from myscheme.gov.in as draft rows")
     parser.add_argument("--pages", type=int, default=2, help="Number of search-result pages to ingest (10 schemes/page). Default 2 — start small.")
+    parser.add_argument("--start-page", type=int, default=1, help="Resume from this page number (1-indexed) instead of the beginning — use after an interrupted run.")
     args = parser.parse_args()
-    run(args.pages)
+    run(args.pages, args.start_page)

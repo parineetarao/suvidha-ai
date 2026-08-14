@@ -47,15 +47,15 @@ USER_AGENT = "SuvidhaAI-Bot/0.1 (final-year academic project; contact: <your tea
 DEBUG_DUMP_DIR = Path("app/ingestion/_debug_dumps")
 
 
-def debug_fetch_rendered_page(slug: str) -> str:
+def debug_fetch_rendered_page(slug: str, save_debug_copy: bool = True) -> str:
     """Loads a real scheme page in a headless browser, waits for the
     client-side content to actually render (not just the loading shell),
-    and saves the full rendered HTML to disk for manual inspection.
+    and returns the full rendered HTML.
 
-    This is the function to run FIRST, by hand, on one or two known scheme
-    slugs (e.g. "rkvp", "pm-kisan") — the output tells us what the real DOM
-    structure is, which is what actual extraction selectors need to be
-    written against.
+    save_debug_copy=True (default) also writes a copy to disk for manual
+    inspection — useful during development, unnecessary once selectors are
+    proven. Batch runs (ingest_myscheme.py) pass save_debug_copy=False so
+    they don't accumulate one ~200KB file per scheme processed.
     """
     url = f"{BASE_URL}/schemes/{slug}"
     logger.info("Fetching rendered page: %s", url)
@@ -65,10 +65,6 @@ def debug_fetch_rendered_page(slug: str) -> str:
         page = browser.new_page(user_agent=USER_AGENT)
         page.goto(url, wait_until="networkidle")
 
-        # The loading state we've seen so far is three bouncing dots inside
-        # <main>. Wait for that to be replaced by real content — heuristic:
-        # wait until <main> contains a reasonable amount of text, since we
-        # don't yet know the real content container's selector.
         try:
             page.wait_for_function(
                 "document.querySelector('main') && document.querySelector('main').innerText.length > 200",
@@ -77,17 +73,18 @@ def debug_fetch_rendered_page(slug: str) -> str:
         except Exception:
             logger.warning(
                 "Content didn't appear to load within 15s for slug '%s' — "
-                "saving whatever rendered anyway, for inspection.",
+                "proceeding anyway.",
                 slug,
             )
 
         html = page.content()
         browser.close()
 
-    DEBUG_DUMP_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = DEBUG_DUMP_DIR / f"{slug}.html"
-    out_path.write_text(html, encoding="utf-8")
-    logger.info("Saved rendered HTML to %s (%d bytes)", out_path, len(html))
+    if save_debug_copy:
+        DEBUG_DUMP_DIR.mkdir(parents=True, exist_ok=True)
+        out_path = DEBUG_DUMP_DIR / f"{slug}.html"
+        out_path.write_text(html, encoding="utf-8")
+        logger.info("Saved rendered HTML to %s (%d bytes)", out_path, len(html))
 
     time.sleep(RATE_LIMIT_SECONDS)
     return html

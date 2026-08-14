@@ -14,19 +14,25 @@ are plain `def`, not `async def` — FastAPI runs sync endpoints in a
 threadpool automatically, so this is a calling-convention choice, not a
 performance downgrade.
 
-REMAINING GAP: `get_current_user_profile` is a stub that always returns
-HTTP 501. POST /schemes/match cannot work correctly until Member 1's real
-auth dependency exists to supply a real logged-in user's profile — this
-makes that gap loud and explicit instead of faking a working response.
+AUTH: POST /schemes/match now uses Member 1's real get_current_user
+dependency (app/api/deps.py). Their User model only holds identity fields;
+profile/eligibility fields (state_code, occupation, income, etc.) live on a
+separate related UserProfile object via user.profile, which can be None if
+the citizen hasn't completed their profile yet — handled explicitly below
+with a 400, not a silent crash or wrong result.
 Owned by: Member 2 — Scheme Discovery Engine.
 """
+
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.scheme import Scheme
+from app.models.user import User
 from app.schemas.scheme import (
     MatchReason as MatchReasonOut,
     PaginatedSchemes,
@@ -44,11 +50,26 @@ from app.services.search_service import hybrid_search
 router = APIRouter(prefix="/schemes", tags=["schemes"])
 
 
-def get_current_user_profile() -> UserProfile:
-    raise HTTPException(
-        status_code=501,
-        detail="Auth not wired up yet — POST /schemes/match needs Member 1's "
-        "auth dependency to supply a real user profile.",
+def get_current_user_profile(current_user: Annotated[User, Depends(get_current_user)]) -> UserProfile:
+    """Maps Member 1's real User + related UserProfile ORM objects into the
+    plain UserProfile dataclass matching_service.py expects. Kept as a
+    separate small function (rather than inlining into match_schemes)
+    so matching_service.py stays fully decoupled from Member 1's actual
+    model shape — if their fields change, only this mapping needs updating."""
+    if current_user.profile is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Complete your profile before requesting personalized matches.",
+        )
+    p = current_user.profile
+    return UserProfile(
+        state_code=p.state_code,
+        occupation=p.occupation,
+        annual_income_inr=p.annual_income_inr,
+        category=p.category,
+        gender=p.gender,
+        disability_status=p.disability_status,
+        family_size=p.family_size,
     )
 
 

@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 GROQ_MODEL = "llama-3.3-70b-versatile"
 GROQ_RATE_LIMIT_SECONDS = 2.5  # keeps well under Groq's free-tier ~30 requests/minute cap
 
-TARGET_FIELDS = ["min_age", "max_age", "gender", "categories", "income_max", "occupations", "states"]
+TARGET_FIELDS = ["min_age", "max_age", "gender", "categories", "income_max", "occupations", "states", "min_education_level", "min_marks_percentage"]
 
 
 # ---------------------------------------------------------------------------
@@ -63,13 +63,27 @@ def _regex_extract(text: str) -> dict:
 
     lower = text.lower()
 
-    max_age_match = re.search(r"(?:below|under|less than)\s+(\d{1,3})\s*years", lower)
-    if max_age_match:
-        result["max_age"] = int(max_age_match.group(1))
-
-    min_age_match = re.search(r"(?:above|over|at least|minimum)\s+(\d{1,3})\s*years", lower)
+    # IMPORTANT: check "not less than" / "at least" / "minimum" BEFORE the
+    # generic max_age pattern below — otherwise phrases like "not less than
+    # 18 years" get misread as a maximum (a real bug found during review).
+    # ALSO exclude "years [of] service/experience/residual..." — found
+    # during review this pattern was twice misread as an age requirement
+    # when it actually meant years of employment/experience, not age
+    # (e.g. "at least 5 years residual service" is not "age 5").
+    min_age_match = re.search(
+        r"(?:above|over|at least|minimum|not less than|not below)\s+(\d{1,3})\s*years"
+        r"(?!\s*(?:of\s+)?(?:service|experience|residual|tenure|standing))",
+        lower,
+    )
     if min_age_match:
         result["min_age"] = int(min_age_match.group(1))
+
+    # Only look for a max_age pattern if this sentence isn't already a
+    # "not less than" (minimum) phrasing that a naive "less than" match
+    # would otherwise catch.
+    max_age_match = re.search(r"(?<!not )(?:below|under|less than)\s+(\d{1,3})\s*years", lower)
+    if max_age_match:
+        result["max_age"] = int(max_age_match.group(1))
 
     # NOTE: gender is deliberately NOT regex-matched here. Real eligibility
     # text often uses conditional phrasing like "if the applicant is male,
@@ -98,6 +112,28 @@ def _regex_extract(text: str) -> dict:
         raw = income_match.group(1).replace(",", "")
         if raw.isdigit():
             result["income_max"] = int(raw)
+
+    # States/UTs — a fixed, enumerable list, so regex is actually reliable
+    # here, unlike the more ambiguous fields. Found via review: this field
+    # was left entirely to the LLM pass and it missed it constantly, even
+    # on plain sentences like "resident of Tamil Nadu" — a real coverage
+    # gap, not just hard edge cases. Matching on the state name itself
+    # catches the vast majority of real phrasings ("resident of X", "native
+    # of X", "applicant should be from X") without needing to enumerate
+    # every possible sentence structure.
+    INDIAN_STATES_UTS = [
+        "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh",
+        "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jharkhand", "Karnataka",
+        "Kerala", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram",
+        "Nagaland", "Odisha", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu",
+        "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal",
+        "Andaman and Nicobar", "Chandigarh", "Dadra and Nagar Haveli",
+        "Daman and Diu", "Delhi", "Jammu and Kashmir", "Ladakh", "Lakshadweep",
+        "Puducherry",
+    ]
+    found_states = [s for s in INDIAN_STATES_UTS if s.lower() in lower]
+    if found_states:
+        result["states"] = found_states
 
     return result
 
@@ -136,6 +172,10 @@ Field meanings (be precise — these are NOT about award tiers or application ca
 - occupations: the applicant's profession/role (e.g. "farmer", "scientist", "student"), not the scheme name.
 - income_max: a numeric income ceiling in INR, or null if no income condition is mentioned.
 - states: Indian states/UTs this scheme is restricted to, or [] if it's a central/nationwide scheme with no state restriction.
+- min_education_level: the minimum educational qualification required, as a short standard string — one of: "none", "primary", "secondary", "hsc" (10+2 / higher secondary), "graduate", "postgraduate", "doctoral". Use null if no education requirement is mentioned. Pick the closest standard value even if the text phrases it differently (e.g. "10+2" or "higher secondary" both map to "hsc").
+- min_marks_percentage: a numeric minimum marks/percentage threshold (e.g. "65% and above" -> 65), or null if none mentioned. This is common in scholarship-type schemes.
+
+FINAL FIELD LIST — this is deliberately the complete set. If the eligibility text mentions something that doesn't fit any of these 9 fields, do not invent a new field name — leave it uncaptured. The real eligibility_text is always shown to the citizen directly for anything this structured schema can't represent.
 
 WORKED EXAMPLE (a real case that trips up naive extraction — learn from it):
 Text: "Finance is provided for Greenfield Enterprises. If the applicant is a male, he must be from SC / ST category. The age of the applicant must be at least 18 years."
