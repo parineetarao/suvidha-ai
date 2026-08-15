@@ -18,8 +18,14 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.api.v1.auth import router as auth_router
 from app.api.v1.users import router as users_router
 from app.api.v1.admin import router as admin_router
+from app.api.v1.applications import router as applications_router
+from app.api.v1.documents import router as documents_router
+from app.api.v1.voice import router as voice_router
+from app.api.v1.csc import router as csc_router
 from app.admin_ui.views import register_admin_views
 from app.db.session import SessionLocal
+from app.services.voice_service import voice_service
+
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -32,6 +38,8 @@ async def lifespan(app: FastAPI):
     # per-request would make every call slow and eventually exhaust RAM.
     logger.info("Loading embedding model at startup...")
     embedding_service.load()
+    logger.info("Loading voice (faster-whisper) model at startup...")
+    voice_service.load()
     yield
 
 def create_app() -> FastAPI:
@@ -50,6 +58,10 @@ def create_app() -> FastAPI:
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(users_router, prefix="/api/v1")
     app.include_router(admin_router, prefix="/api/v1")
+    app.include_router(applications_router, prefix="/api/v1")
+    app.include_router(documents_router, prefix="/api/v1")
+    app.include_router(voice_router, prefix="/api/v1")
+    app.include_router(csc_router, prefix="/api/v1")
 
     register_admin_views(app, engine, SessionLocal, settings.jwt_secret)
 	
@@ -75,8 +87,7 @@ def create_app() -> FastAPI:
             "status": "ok" if db_status == "ok" and redis_status == "ok" else "error",
             "db": db_status,
             "redis": redis_status,
-            # Whisper model load-at-startup is wired in Phase 2 (voice_service)
-            "model_loaded": False,
+            "model_loaded": voice_service.is_ready,
             "embedding_model_loaded": embedding_service.is_ready,
         }
 
