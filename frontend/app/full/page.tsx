@@ -9,6 +9,8 @@ import { DR, drt } from '@/lib/document-readiness/translations'
 import { compareNames } from '@/lib/document-readiness/name-matching'
 import { computeReadinessScore } from '@/lib/document-readiness/readiness-score'
 import { loadStoredResults, saveStoredResult, clearStoredResults } from '@/lib/document-readiness/storage'
+import { verifyDocument } from '@/lib/documents'
+import { getCurrentPosition, getNearbyCscs, type CSCOut } from '@/lib/csc'
 import { DocumentReadinessCheck } from '@/components/document-readiness/DocumentReadinessCheck'
 import { NameConsistencyCard } from '@/components/document-readiness/NameConsistencyCard'
 import { ReadinessSummary } from '@/components/document-readiness/ReadinessSummary'
@@ -553,13 +555,6 @@ function getTrackerNextStep(item: TrackerItem, lang: Lang): string {
   return item.nextStep
 }
 
-const cscData = [
-  { id: 1, name: 'Jan Seva Kendra — Hadapsar', address: 'Shop 4, Near Bus Stand, Hadapsar, Pune 411028', distance: '0.8 km', isOpen: true, hours: '9AM–6PM', phone: '9876543210' },
-  { id: 2, name: 'CSC Centre — Wanowrie', address: 'Wanowrie Main Road, Near Post Office, Pune', distance: '1.4 km', isOpen: true, hours: '10AM–5PM', phone: '9876543211' },
-  { id: 3, name: 'Digital Seva Kendra — Undri', address: 'Undri Chowk, Pune 411060', distance: '2.1 km', isOpen: false, hours: '9AM–5PM', phone: '9876543212' },
-  { id: 4, name: 'Jan Seva Kendra — Kondhwa', address: 'Kondhwa Road, Near Garden, Pune', distance: '2.8 km', isOpen: true, hours: '9AM–7PM', phone: '9876543213' }
-]
-
 const helplineData = [
   { name: 'Central Scheme Helpline', nameHindi: 'केंद्रीय योजना हेल्पलाइन', nameMr: 'केंद्रीय योजना हेल्पलाइन', number: '155261', hours: 'Mon–Sat · 9AM–6PM', hoursHindi: 'सोम–शनि · सुबह 9–शाम 6', hoursMr: 'सोम–शनि · सकाळी 9–संध्या. 6', languages: 'Hindi · English · Regional', languagesHindi: 'हिंदी · अंग्रेज़ी · क्षेत्रीय', languagesMr: 'हिंदी · इंग्रजी · प्रादेशिक', category: 'General', categoryHindi: 'सामान्य', categoryMr: 'सामान्य', categoryBg: '#F4F1EC', categoryColor: '#78716C', btnColor: '#1A6B3C' },
   { name: 'PM Kisan Helpline', nameHindi: 'पीएम किसान हेल्पलाइन', nameMr: 'पीएम किसान हेल्पलाइन', number: '155261', hours: 'Mon–Fri · 9AM–5PM', hoursHindi: 'सोम–शुक्र · सुबह 9–शाम 5', hoursMr: 'सोम–शुक्र · सकाळी 9–संध्या. 5', languages: 'Hindi · English · Regional', languagesHindi: 'हिंदी · अंग्रेज़ी · क्षेत्रीय', languagesMr: 'हिंदी · इंग्रजी · प्रादेशिक', category: 'Agriculture', categoryHindi: 'कृषि', categoryMr: 'शेती', categoryBg: '#F0FDF4', categoryColor: '#15803D', btnColor: '#1A6B3C' },
@@ -641,6 +636,9 @@ function FullModePageContent() {
   const [referenceNumber, setReferenceNumber] = useState('')
   const [scriptLang, setScriptLang] = useState<'hindi' | 'marathi' | 'english'>('hindi')
   const [selectedCSC, setSelectedCSC] = useState(0)
+  const [cscList, setCscList] = useState<CSCOut[]>([])
+  const [cscStatus, setCscStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [cscErrorMessage, setCscErrorMessage] = useState<string | null>(null)
   const [trackerFilter, setTrackerFilter] = useState('all')
   const [isListening, setIsListening] = useState(false)
   const [sortBy, setSortBy] = useState('match')
@@ -664,6 +662,7 @@ function FullModePageContent() {
   const [docResults, setDocResults] = useState<Partial<Record<DocumentType, DocumentReadinessResult>>>({})
   const [selectedDocType, setSelectedDocType] = useState<DocumentType | null>(null)
   const [hasStoredDocData, setHasStoredDocData] = useState(false)
+  const [docVerifyStatus, setDocVerifyStatus] = useState<Partial<Record<DocumentType, 'pending' | 'synced' | 'failed'>>>({})
 
   useEffect(() => {
     const stored = loadStoredResults()
@@ -695,6 +694,19 @@ function FullModePageContent() {
       }
       return next
     })
+
+    if (result && (result.status === 'ready' || result.status === 'warning')) {
+      setDocVerifyStatus((prev) => ({ ...prev, [type]: 'pending' }))
+      verifyDocument(result)
+        .then(() => setDocVerifyStatus((prev) => ({ ...prev, [type]: 'synced' })))
+        .catch(() => setDocVerifyStatus((prev) => ({ ...prev, [type]: 'failed' })))
+    } else if (!result) {
+      setDocVerifyStatus((prev) => {
+        const next = { ...prev }
+        delete next[type]
+        return next
+      })
+    }
   }
 
   const clearDocReadinessData = () => {
@@ -748,6 +760,34 @@ function FullModePageContent() {
       window.open('https://www.google.com/maps/search/Common+Service+Centre+CSC+Pune', '_blank')
     }
   }
+
+  const openDirectionsTo = (csc: CSCOut) => {
+    window.open(`https://www.google.com/maps/dir/?api=1&destination=${csc.latitude},${csc.longitude}`, '_blank')
+  }
+
+  const fetchNearbyCscs = async () => {
+    setCscStatus('loading')
+    setCscErrorMessage(null)
+    try {
+      const position = await getCurrentPosition()
+      const results = await getNearbyCscs(position.coords.latitude, position.coords.longitude)
+      setCscList(results)
+      setSelectedCSC(0)
+      setCscStatus('ready')
+    } catch (err) {
+      setCscErrorMessage(err instanceof GeolocationPositionError
+        ? 'Location access denied — allow location access to find nearby CSCs.'
+        : err instanceof Error ? err.message : 'Could not load nearby CSCs.')
+      setCscStatus('error')
+    }
+  }
+
+  useEffect(() => {
+    if (activePanel === 'csc' && cscStatus === 'idle') {
+      fetchNearbyCscs()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePanel])
 
   const shareWhatsApp = (text: string) => {
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank')
@@ -1849,6 +1889,13 @@ Place: ${profileData.state}`
                       onResult={(result) => handleDocResult(activeDocType, result)}
                       inputIdPrefix={`full-${activeDocType}`}
                     />
+                    {docVerifyStatus[activeDocType] && (
+                      <p className="text-[10px] mt-2" style={{ color: docVerifyStatus[activeDocType] === 'failed' ? '#DC2626' : docVerifyStatus[activeDocType] === 'synced' ? '#15803D' : '#78716C' }}>
+                        {docVerifyStatus[activeDocType] === 'pending' && 'Saving verification…'}
+                        {docVerifyStatus[activeDocType] === 'synced' && 'Verification saved to server ✓'}
+                        {docVerifyStatus[activeDocType] === 'failed' && 'Could not save verification to server'}
+                      </p>
+                    )}
                   </div>
 
                   <NameConsistencyCard lang={lang} profileName={profileData.fullName || '—'} comparisons={nameComparisons} onGoToDocument={(t) => setSelectedDocType(t)} />
@@ -1995,7 +2042,24 @@ Place: ${profileData.state}`
                   placeholder={g(S.full.cscSearchPlaceholder, lang)}
                 />
                 <div style={{ overflowY: 'auto', flex: 1 }}>
-                  {cscData.map((csc, index) => (
+                  {cscStatus === 'loading' && (
+                    <div style={{ padding: '16px 12px', fontSize: '11px', color: '#78716C' }}>Finding CSCs near you…</div>
+                  )}
+                  {cscStatus === 'error' && (
+                    <div style={{ padding: '12px' }}>
+                      <p style={{ fontSize: '11px', color: '#DC2626', marginBottom: '8px', lineHeight: 1.5 }}>{cscErrorMessage}</p>
+                      <button
+                        style={{ fontSize: '10px', fontWeight: 700, padding: '6px 10px', borderRadius: '6px', border: 'none', background: '#E8690B', color: 'white', cursor: 'pointer', fontFamily: 'inherit' }}
+                        onClick={fetchNearbyCscs}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
+                  {cscStatus === 'ready' && cscList.length === 0 && (
+                    <div style={{ padding: '16px 12px', fontSize: '11px', color: '#78716C' }}>No CSCs found near your current location.</div>
+                  )}
+                  {cscList.map((csc, index) => (
                     <div
                       key={csc.id}
                       style={{
@@ -2010,31 +2074,15 @@ Place: ${profileData.state}`
                       <div style={{ fontSize: '9px', color: '#78716C', marginTop: '2px', lineHeight: 1.4 }}>{csc.address}</div>
                       <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '5px' }}>
                         <span style={{ fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '99px', background: '#F4F1EC', color: '#57534E' }}>
-                          {csc.distance}
+                          {csc.distance_km.toFixed(1)} km
                         </span>
-                        <span style={{ fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '99px', background: csc.isOpen ? '#F0FDF4' : '#FEF2F2', color: csc.isOpen ? '#15803D' : '#DC2626' }}>
-                          ● {csc.isOpen ? g(S.full.cscOpen, lang) : g(S.full.cscClosed, lang)}
-                        </span>
-                        <span style={{ fontSize: '9px', color: '#A8A29E', marginLeft: '2px' }}>{csc.hours}</span>
                       </div>
                       <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
                         <button
                           style={{ fontSize: '9px', fontWeight: 700, padding: '4px 8px', borderRadius: '5px', border: 'none', background: '#1565C0', color: 'white', cursor: 'pointer', fontFamily: 'inherit' }}
-                          onClick={openMaps}
+                          onClick={() => openDirectionsTo(csc)}
                         >
                           {g(S.full.directions, lang)}
-                        </button>
-                        <button
-                          style={{ fontSize: '9px', fontWeight: 700, padding: '4px 8px', borderRadius: '5px', border: 'none', background: '#F4F1EC', color: '#1C1917', cursor: 'pointer', fontFamily: 'inherit' }}
-                          onClick={() => window.open('tel:' + csc.phone)}
-                        >
-                          {g(S.full.callBtn, lang)}
-                        </button>
-                        <button
-                          style={{ fontSize: '9px', fontWeight: 700, padding: '4px 8px', borderRadius: '5px', border: 'none', background: '#25D366', color: 'white', cursor: 'pointer', fontFamily: 'inherit' }}
-                          onClick={() => window.open('https://wa.me/91' + csc.phone + '?text=' + encodeURIComponent(g(S.full.waHelpText, lang)), '_blank')}
-                        >
-                          {g(S.full.waBtn, lang)}
                         </button>
                       </div>
                     </div>
