@@ -34,3 +34,4 @@ from app.models.scheme import Scheme                   # noqa: E402, F401
 # --- Member 3 (Application / Voice) ---
 from app.models.application import Application, ApplicationStatusHistory  # noqa: E402, F401
 from app.models.document import DocumentVerification                       # noqa: E402, F401
+from app.models.csc import CSC                                             # noqa: E402, F401
