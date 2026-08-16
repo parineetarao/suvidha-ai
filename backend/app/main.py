@@ -6,7 +6,7 @@
 import app.db.base  # noqa: F401
 
 import logging
-
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from redis import Redis
@@ -17,6 +17,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import engine
+from app.api.v1.schemes import router as schemes_router
+from app.services.embedding_service import embedding_service
 
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -30,10 +32,17 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
-
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Loads the sentence-transformer model ONCE here, at startup — not
+    # per-request. The model takes ~5s and ~500MB RAM to load; loading it
+    # per-request would make every call slow and eventually exhaust RAM.
+    logger.info("Loading embedding model at startup...")
+    embedding_service.load()
+    yield
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="SuvidhaAI API")
+    app = FastAPI(title="SuvidhaAI API", lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,
@@ -75,10 +84,12 @@ def create_app() -> FastAPI:
             "redis": redis_status,
             # Whisper model load-at-startup is wired in Phase 2 (voice_service)
             "model_loaded": False,
+            "embedding_model_loaded": embedding_service.is_ready,
         }
 
-    # Member 1 (Identity & Access) routers added above.
-    # Member 2/3 routers land here as their modules are wired in.
+
+    app.include_router(schemes_router, prefix="/api/v1")
+
 
     return app
 

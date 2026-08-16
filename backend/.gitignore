@@ -38,3 +38,4 @@ alembic/versions/__pycache__/
 /models/
 *.bin
 *.safetensors
+app/ingestion/_debug_dumps/
