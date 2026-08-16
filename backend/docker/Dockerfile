@@ -8,6 +8,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini .
+COPY templates ./templates
+COPY tests ./tests
+COPY pytest.ini .
 
 RUN useradd --create-home appuser
 USER appuser

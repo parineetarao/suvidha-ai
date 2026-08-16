@@ -34,3 +34,11 @@ numpy
 httpx
 beautifulsoup4
 apscheduler
+
+# Letter generation (Member 3)
+jinja2==3.1.4
+
+# Voice transcription (Member 3) — CPU-only, small model for demo speed
+faster-whisper==1.1.0
+python-multipart==0.0.20
+requests==2.32.3

@@ -12,6 +12,13 @@ import { DocumentReadinessCheck } from '@/components/document-readiness/Document
 import { NameConsistencyCard } from '@/components/document-readiness/NameConsistencyCard';
 import { ReadinessSummary } from '@/components/document-readiness/ReadinessSummary';
 import type { ReadinessScoreOutput } from '@/lib/document-readiness/readiness-score';
+import { transcribeAudio, type VoiceLanguage } from '@/lib/voice';
+
+function toVoiceLanguage(uiLang: string): VoiceLanguage {
+  if (uiLang === 'en-IN') return 'en';
+  if (uiLang === 'mr-IN') return 'mr';
+  return 'hi';
+}
 
 function mapSimpleDocIdToType(id: string): DocumentType {
   switch (id) {
@@ -1351,6 +1358,11 @@ export default function SimpleModePage() {
   const [isTyping, setIsTyping] = useState(false);
   const [expandedCard, setExpandedCard] = useState<number | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
 
   const [docCheckState, setDocCheckState] = useState<Record<string, DocCheckStatus>>({});
   const [docCheckCategory, setDocCheckCategory] = useState('');
@@ -1543,6 +1555,56 @@ export default function SimpleModePage() {
     }, 400);
   }, 3400)
 }, [addMsg]);
+
+  const stopRecording = useCallback(() => {
+    mediaRecorderRef.current?.stop();
+  }, []);
+
+  const startRecording = useCallback(async () => {
+    setVoiceError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      audioChunksRef.current = [];
+
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+        setIsRecording(false);
+
+        const audioBlob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        audioChunksRef.current = [];
+
+        if (audioBlob.size === 0) return;
+
+        setIsTranscribing(true);
+        try {
+          const result = await transcribeAudio(audioBlob, toVoiceLanguage(selectedLangRef.current));
+          if (result.text.trim()) {
+            handleSend(result.text);
+          } else {
+            setVoiceError(ui.voiceEmptyError ?? 'Could not understand the audio. Please try again.');
+          }
+        } catch {
+          setVoiceError(ui.voiceTranscribeError ?? 'Could not transcribe audio. Please try again.');
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+
+      recorder.start();
+      setIsRecording(true);
+    } catch {
+      setVoiceError(ui.voiceMicError ?? 'Microphone access denied. Please allow microphone access and try again.');
+    }
+  }, [handleSend]);
 
   const ui = uiStrings[selectedLang as UiLang] || uiStrings['hi-IN'];
   const lang = resolveUiLang(selectedLang);

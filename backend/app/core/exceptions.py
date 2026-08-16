@@ -70,3 +70,25 @@ class OTPDeliveryFailed(HTTPException):
 
     def __init__(self, detail: str = "SMS delivery is temporarily unavailable. Please try again shortly."):
         super().__init__(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
+
+
+# --- Member 3 (Application lifecycle) ---
+
+class InvalidTransition(HTTPException):
+    """Attempted an application status change the state machine doesn't
+    allow (e.g. draft -> approved directly, skipping every step between).
+    See services/application_service.py's TRANSITIONS graph."""
+
+    def __init__(self, detail: str = "This status change is not allowed from the application's current state."):
+        super().__init__(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
+class ApplicationNotFound(HTTPException):
+    """No such application, or it exists but belongs to a different user —
+    deliberately the same response either way. A 403 here would confirm to
+    an attacker that a guessed application UUID exists and just isn't
+    theirs; 404 reveals nothing. Same reasoning as InvalidCredentials
+    above not distinguishing "no OTP" from "wrong code"."""
+
+    def __init__(self, detail: str = "Application not found."):
+        super().__init__(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
