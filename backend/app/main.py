@@ -1,3 +1,10 @@
+# Import app.db.base FIRST, before any router — routers import models,
+# and models import Base from this file. If a router imports a model
+# before base.py has been loaded standalone, base.py's own model imports
+# collide with the still-initializing model, causing a circular import.
+# Same fix pattern used in scripts/create_admin.py and api/deps.py.
+import app.db.base  # noqa: F401
+
 import logging
 
 from fastapi import FastAPI

@@ -30,6 +30,8 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     restart: unless-stopped
+    volumes:
+      - ../alembic:/app/alembic
     env_file:
       - ../.env
     environment:

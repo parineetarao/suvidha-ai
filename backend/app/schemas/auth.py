@@ -13,28 +13,46 @@ import uuid
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.user import UserOut
-
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 class OTPRequestIn(BaseModel):
-    """Body of POST /auth/request-otp."""
-
-    mobile_number: str = Field(
-        ...,
-        description="10-digit Indian mobile number, no country code.",
-        examples=["9876543210"],
-    )
+    mobile_number: str | None = None
+    email: EmailStr | None = None
 
     @field_validator("mobile_number")
     @classmethod
-    def validate_mobile(cls, v: str) -> str:
-        # A regex check here, not just Field(pattern=...), because we want a
-        # clear, custom error message rather than Pydantic's generic
-        # "string does not match pattern" — this matters for a decent
-        # frontend error display ("Enter a valid 10-digit mobile number").
-        # Indian mobile numbers always start with 6, 7, 8, or 9.
+    def validate_mobile(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
         if not re.fullmatch(r"[6-9]\d{9}", v):
             raise ValueError("Enter a valid 10-digit Indian mobile number.")
         return v
+
+    @model_validator(mode="after")
+    def exactly_one_identifier(self) -> "OTPRequestIn":
+        if bool(self.mobile_number) == bool(self.email):
+            raise ValueError("Provide exactly one of mobile_number or email, not both or neither.")
+        return self
+
+
+class OTPVerifyIn(BaseModel):
+    mobile_number: str | None = None
+    email: EmailStr | None = None
+    code: str = Field(..., min_length=6, max_length=6)
+    full_name: str | None = None  # only used if this creates a new user
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, v: str) -> str:
+        if not v.isdigit():
+            raise ValueError("OTP code must be 6 digits.")
+        return v
+
+    @model_validator(mode="after")
+    def exactly_one_identifier(self) -> "OTPVerifyIn":
+        if bool(self.mobile_number) == bool(self.email):
+            raise ValueError("Provide exactly one of mobile_number or email, not both or neither.")
+        return self
 
 
 class OTPRequestOut(BaseModel):
@@ -50,20 +68,6 @@ class OTPRequestOut(BaseModel):
 
     request_id: uuid.UUID
     expires_in: int = Field(description="Seconds until this OTP expires.")
-
-
-class OTPVerifyIn(BaseModel):
-    """Body of POST /auth/verify-otp."""
-
-    mobile_number: str
-    code: str = Field(..., min_length=6, max_length=6)
-
-    @field_validator("code")
-    @classmethod
-    def validate_code(cls, v: str) -> str:
-        if not v.isdigit():
-            raise ValueError("OTP code must be 6 digits.")
-        return v
 
 
 class TokenPair(BaseModel):

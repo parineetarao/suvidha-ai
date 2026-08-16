@@ -41,7 +41,18 @@ class User(Base):
     # both enforces the business rule (one account per mobile number) and
     # gets you a database index for free, which matters because every OTP
     # request and login does a lookup by mobile_number.
-    mobile_number: Mapped[str] = mapped_column(String(15), unique=True, index=True)
+    mobile_number: Mapped[str | None] = mapped_column(
+        String(15), unique=True, index=True, nullable=True
+    )
+
+    # Nullable, unique when present. A citizen signs up via mobile OR email —
+    # exactly one identity path per account, enforced at the application layer
+    # (schemas/auth.py), not a DB constraint. Both columns nullable is what
+    # makes "either, not both required" possible without CHECK-constraint
+    # gymnastics.
+    email: Mapped[str | None] = mapped_column(
+        String(255), unique=True, index=True, nullable=True
+    )
 
     # Nullable because a user exists (and can log in) the moment their OTP is
     # verified, before they've filled in any profile details — full_name is

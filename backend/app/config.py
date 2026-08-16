@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     msg91_api_key: str = ""
     msg91_template_id: str = "" 
 
+    email_mode: str = "mock"
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    email_from: str = "noreply@suvidhaai.local"
+
     @property
     def database_url(self) -> str:
         return (
