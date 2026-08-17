@@ -46,7 +46,7 @@ class UserSummary(BaseModel):
     """
 
     id: uuid.UUID
-    mobile_number: str
+    mobile_number: str | None = None
     full_name: str | None = None
     is_verified: bool
     created_at: datetime
