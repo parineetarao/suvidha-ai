@@ -13,11 +13,35 @@ import { NameConsistencyCard } from '@/components/document-readiness/NameConsist
 import { ReadinessSummary } from '@/components/document-readiness/ReadinessSummary';
 import type { ReadinessScoreOutput } from '@/lib/document-readiness/readiness-score';
 import { transcribeAudio, type VoiceLanguage } from '@/lib/voice';
+import { ApiError } from '@/lib/api-client';
+import { synthesizeSpeech } from '@/lib/tts';
+import { searchSchemesFromVoiceText, type RealSchemeMatch, type ParsedVoiceProfile } from '@/lib/scheme-voice-search';
+import type { Lang as DocCheckLang } from '@/lib/strings';
+
+// The document-readiness subsystem (drt/DR, NameConsistencyCard, ReadinessSummary,
+// DocumentReadinessCheck) has its own separate translation dictionary scoped to
+// only 3 languages — expanding that content to 10 languages is out of scope here.
+// Any of the 7 newly-added UI languages falls back to Hindi for that subsystem only;
+// everything else in this file (uiStrings/greetings/botResponses) is fully 10-language.
+function toDocCheckLang(lang: UiLang): DocCheckLang {
+  return lang === 'mr-IN' || lang === 'en-IN' ? lang : 'hi-IN';
+}
+
+const UI_LANG_TO_VOICE_LANG: Record<string, VoiceLanguage> = {
+  'en-IN': 'en',
+  'hi-IN': 'hi',
+  'mr-IN': 'mr',
+  'ta-IN': 'ta',
+  'te-IN': 'te',
+  'kn-IN': 'kn',
+  'ml-IN': 'ml',
+  'bn-IN': 'bn',
+  'gu-IN': 'gu',
+  'pa-IN': 'pa',
+};
 
 function toVoiceLanguage(uiLang: string): VoiceLanguage {
-  if (uiLang === 'en-IN') return 'en';
-  if (uiLang === 'mr-IN') return 'mr';
-  return 'hi';
+  return UI_LANG_TO_VOICE_LANG[uiLang] ?? 'hi';
 }
 
 function mapSimpleDocIdToType(id: string): DocumentType {
@@ -47,6 +71,8 @@ type Message = {
   category?: SchemeCategory;
   lang?: string;
   timestamp: string;
+  realResults?: RealSchemeMatch[];
+  parsedProfile?: ParsedVoiceProfile;
 };
 
 type SchemeItem = {
@@ -102,8 +128,13 @@ function getSchemeSteps(scheme: SchemeItem, lang: UiLang): string[] {
 
 const getTime = () => new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 
-function speak(text: string, lang = 'hi-IN') {
-  if (typeof window === 'undefined') return;
+// Module-level (not React state) so speak() can stop whatever's currently
+// playing before starting the next line — same pattern as the
+// window.speechSynthesis singleton this replaces.
+let currentTtsAudio: HTMLAudioElement | null = null;
+
+function speakWithBrowserTts(text: string, lang: string) {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return;
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = lang;
@@ -113,7 +144,34 @@ function speak(text: string, lang = 'hi-IN') {
   window.speechSynthesis.speak(utterance);
 }
 
-type UiLang = 'hi-IN' | 'mr-IN' | 'en-IN';
+// Server-side TTS (gTTS) so every language actually produces audio,
+// regardless of which voices happen to be installed on the listener's OS —
+// window.speechSynthesis alone silently says nothing for languages with no
+// matching local voice (commonly everything except Hindi/English on
+// Windows). Falls back to the browser's own TTS if the server call fails
+// (offline, backend down) so speech doesn't go completely silent.
+async function speak(text: string, lang = 'hi-IN') {
+  if (typeof window === 'undefined') return;
+
+  if (currentTtsAudio) {
+    currentTtsAudio.pause();
+    currentTtsAudio = null;
+  }
+  window.speechSynthesis?.cancel();
+
+  try {
+    const blob = await synthesizeSpeech(text, toVoiceLanguage(lang));
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    currentTtsAudio = audio;
+    audio.addEventListener('ended', () => URL.revokeObjectURL(url));
+    await audio.play();
+  } catch {
+    speakWithBrowserTts(text, lang);
+  }
+}
+
+type UiLang = 'hi-IN' | 'mr-IN' | 'en-IN' | 'ta-IN' | 'te-IN' | 'kn-IN' | 'ml-IN' | 'bn-IN' | 'gu-IN' | 'pa-IN';
 
 const uiStrings = {
   'hi-IN': {
@@ -132,7 +190,7 @@ const uiStrings = {
     shareBtn: 'Share',
     helplineBtn: 'Helpline 155261',
     findCSC: 'Find Nearest CSC',
-    today: 'आज · Today',
+    today: 'आज',
     docCheckTitle: 'दस्तावेज़ जाँच — Document Check',
     warningNote: 'ध्यान रखें: आधार में नाम, ज़मीन के कागज़ में नाम, और बैंक में नाम — तीनों बिल्कुल एक जैसे होने चाहिए। यही सबसे बड़ा rejection का कारण है।',
     required: 'ज़रूरी',
@@ -154,6 +212,16 @@ const uiStrings = {
     prepNo: 'बाद में',
     chipList: ['किसान कर्ज़', 'घर की मदद', 'पेंशन', 'दवाइयाँ', 'बच्चों की पढ़ाई'],
     recording: 'सुन रहा हूँ...',
+    transcribing: 'समझ रहा हूँ...',
+    voiceMicError: 'माइक्रोफ़ोन एक्सेस नहीं मिला। कृपया अनुमति दें और फिर कोशिश करें।',
+    voiceTranscribeError: 'आवाज़ को समझने में समस्या हुई। कृपया दोबारा कोशिश करें।',
+    voiceSessionExpiredError: 'आपका सत्र समाप्त हो गया है। कृपया पेज को दोबारा लोड करें और फिर कोशिश करें।',
+    voiceEmptyError: 'कुछ सुनाई नहीं दिया। कृपया दोबारा बोलें।',
+    detectedLabel: 'आपकी बात से समझा:',
+    detectedFemale: 'महिला',
+    detectedMale: 'पुरुष',
+    yearsOld: 'साल',
+    noRealMatches: 'आपकी जानकारी के लिए कोई योजना नहीं मिली।',
     speakBtn: 'बोलकर खोजें',
     pincodeLabel: 'अपना Pin Code डालें:',
     goBtn: 'Go',
@@ -188,7 +256,7 @@ const uiStrings = {
     shareBtn: 'Share',
     helplineBtn: 'Helpline 155261',
     findCSC: 'जवळचे CSC शोधा',
-    today: 'आज · Today',
+    today: 'आज',
     docCheckTitle: 'कागदपत्र तपासणी — Document Check',
     warningNote: 'लक्षात ठेवा: आधारमधील नाव, जमिनीच्या कागदपत्रातील नाव आणि बँकेतील नाव — तिन्ही अगदी सारखे असणे आवश्यक आहे।',
     required: 'आवश्यक',
@@ -210,6 +278,16 @@ const uiStrings = {
     prepNo: 'नंतर',
     chipList: ['शेतकरी कर्ज', 'घरासाठी मदत', 'पेंशन', 'औषधे', 'मुलांचे शिक्षण'],
     recording: 'ऐकत आहे...',
+    transcribing: 'समजून घेत आहे...',
+    voiceMicError: 'मायक्रोफोन अ‍ॅक्सेस मिळाला नाही. कृपया परवानगी द्या आणि पुन्हा प्रयत्न करा.',
+    voiceTranscribeError: 'आवाज समजण्यात अडचण आली. कृपया पुन्हा प्रयत्न करा.',
+    voiceSessionExpiredError: 'तुमचे सत्र संपले आहे. कृपया पेज पुन्हा लोड करा आणि पुन्हा प्रयत्न करा.',
+    voiceEmptyError: 'काही ऐकू आले नाही. कृपया पुन्हा बोला.',
+    detectedLabel: 'तुमच्या बोलण्यावरून समजले:',
+    detectedFemale: 'महिला',
+    detectedMale: 'पुरुष',
+    yearsOld: 'वर्षे',
+    noRealMatches: 'तुमच्या माहितीसाठी कोणतीही योजना सापडली नाही.',
     speakBtn: 'बोलून शोधा',
     pincodeLabel: 'आपला Pin Code टाका:',
     goBtn: 'Go',
@@ -266,6 +344,16 @@ const uiStrings = {
     prepNo: 'Later',
     chipList: ['Farmer loan', 'Housing help', 'Pension', 'Medicines', 'Child education'],
     recording: 'Listening...',
+    transcribing: 'Understanding...',
+    voiceMicError: 'Microphone access denied. Please allow microphone access and try again.',
+    voiceTranscribeError: 'Could not transcribe audio. Please try again.',
+    voiceSessionExpiredError: 'Your session expired. Please reload the page and try again.',
+    voiceEmptyError: 'Could not understand the audio. Please try again.',
+    detectedLabel: 'Detected from what you said:',
+    detectedFemale: 'woman',
+    detectedMale: 'man',
+    yearsOld: 'yrs',
+    noRealMatches: 'No matching schemes were found for your details.',
     speakBtn: 'Speak to Search',
     pincodeLabel: 'Enter your Pin Code:',
     goBtn: 'Go',
@@ -283,7 +371,469 @@ const uiStrings = {
     whatsappHeader: 'SuvidhaAI Schemes:',
     homeLabel: 'Home',
     comingSoon: 'Full Mode — Coming Soon',
-  }
+  },
+  'ta-IN': {
+    govSchemeHelper: 'அரசு திட்ட உதவியாளர்',
+    sarkariSahayak: 'அரசு உதவியாளர்',
+    activeConversation: 'நடப்பு உரையாடல்',
+    farmerSearch: 'விவசாயி திட்டங்கள் தேடல்',
+    farmerSearchSub: 'நான் மகாராஷ்டிராவைச் சேர்ந்த ஒரு விவசாயி...',
+    whatsapp: 'WhatsApp-இல் அனுப்பு',
+    helpline: 'Helpline · 155261',
+    csc: 'அருகிலுள்ள CSC தேடு',
+    simpleMode: 'எளிய முறை',
+    detailedMode: 'விரிவான',
+    sarkaricSahayakSub: 'அரசு உதவியாளர் · எளிய முறை',
+    typeHere: 'இங்கே தட்டச்சு செய்யவும் அல்லது கீழே பேசவும்...',
+    shareBtn: 'Share',
+    helplineBtn: 'Helpline 155261',
+    findCSC: 'அருகிலுள்ள CSC தேடு',
+    today: 'இன்று',
+    docCheckTitle: 'ஆவண சரிபார்ப்பு',
+    warningNote: 'கவனிக்கவும்: ஆதார், நில ஆவணம், வங்கிக் கணக்கு ஆகியவற்றில் உள்ள பெயர் ஒரே மாதிரியாக இருக்க வேண்டும். இதுவே நிராகரிப்பிற்கான முக்கிய காரணம்.',
+    required: 'அவசியம்',
+    hasIt: 'ஆம், உள்ளது',
+    noIt: 'இல்லை',
+    readyStrip: '✓ தயார்',
+    notHave: '✗ இல்லை — எங்கு கிடைக்கும்?',
+    allReady: 'நீங்கள் முழுமையாக தயார்!',
+    allReadySub: 'தேவையான அனைத்து ஆவணங்களும் உங்களிடம் உள்ளன — இப்போது CSC-க்குச் செல்லுங்கள்.',
+    findCSCMaps: 'அருகிலுள்ள CSC → Google Maps',
+    notReady: 'இப்போது CSC-க்குச் செல்ல வேண்டாம்',
+    missingDocs: (n: number) => n + ' ஆவணங்கள் இல்லை — முதலில் இவற்றைச் செய்யுங்கள்:',
+    findOnMaps: 'இந்த இடங்களை Maps-இல் தேடுங்கள்',
+    goAnyway: 'பரவாயில்லை, CSC-க்குச் செல்லுங்கள் (Risk-இல்)',
+    cscSays: 'CSC-இல் இதைச் சொல்லுங்கள்:',
+    sendWhatsApp: 'Script-ஐ WhatsApp-இல் அனுப்பு',
+    newSearch: 'புதிய தேடலைத் தொடங்கு ↺',
+    prepYes: 'ஆம், நிச்சயமாக',
+    prepNo: 'பின்னர்',
+    chipList: ['விவசாயி கடன்', 'வீட்டு உதவி', 'ஓய்வூதியம்', 'மருந்துகள்', 'குழந்தைகள் கல்வி'],
+    recording: 'கேட்கிறேன்...',
+    transcribing: 'புரிந்துகொள்கிறேன்...',
+    voiceMicError: 'மைக்ரோஃபோன் அனுமதி கிடைக்கவில்லை. தயவுசெய்து அனுமதி அளித்து மீண்டும் முயற்சிக்கவும்.',
+    voiceTranscribeError: 'குரலைப் புரிந்துகொள்வதில் சிக்கல் ஏற்பட்டது. மீண்டும் முயற்சிக்கவும்.',
+    voiceSessionExpiredError: 'உங்கள் அமர்வு காலாவதியானது. பக்கத்தை மீண்டும் ஏற்றி மீண்டும் முயற்சிக்கவும்.',
+    voiceEmptyError: 'எதுவும் கேட்கவில்லை. மீண்டும் பேசவும்.',
+    detectedLabel: 'நீங்கள் சொன்னதிலிருந்து கண்டறியப்பட்டது:',
+    detectedFemale: 'பெண்',
+    detectedMale: 'ஆண்',
+    yearsOld: 'வயது',
+    noRealMatches: 'உங்கள் விவரங்களுக்கு பொருந்தும் திட்டங்கள் எதுவும் கிடைக்கவில்லை.',
+    speakBtn: 'பேசித் தேடு',
+    pincodeLabel: 'உங்கள் Pin Code-ஐ உள்ளிடவும்:',
+    goBtn: 'Go',
+    voiceQuery: 'விவசாயி கடன் மற்றும் விவசாயத் திட்டங்களைப் பற்றி சொல்லுங்கள்',
+    progressLabel: (checked: number, total: number) => checked + ' / ' + total + ' தயார்',
+    eligibleBadge: '✓ தகுதி',
+    verifyBadge: '⚠ சரிபார்க்கவும்',
+    howToGet: 'எப்படி பெறுவது?',
+    appStepsLabel: 'விண்ணப்ப படிகள்:',
+    documentsLabel: 'ஆவணங்கள்:',
+    commonDocsList: 'ஆதார், வங்கி பாஸ்புக், அடையாள சான்று',
+    matchHigh: 'உயர் பொருத்தம்',
+    matchMedium: 'நடுத்தர பொருத்தம்',
+    matchStatusLabel: 'பொருத்த நிலை:',
+    whatsappHeader: 'SuvidhaAI திட்டங்கள்:',
+    homeLabel: 'முகப்பு',
+    comingSoon: 'Full Mode — விரைவில் வரும்',
+  },
+  'te-IN': {
+    govSchemeHelper: 'ప్రభుత్వ పథకాల సహాయకుడు',
+    sarkariSahayak: 'ప్రభుత్వ సహాయకుడు',
+    activeConversation: 'ప్రస్తుత సంభాషణ',
+    farmerSearch: 'రైతు పథకాల శోధన',
+    farmerSearchSub: 'నేను మహారాష్ట్ర నుండి వచ్చిన రైతును...',
+    whatsapp: 'WhatsApp‌కు పంపండి',
+    helpline: 'Helpline · 155261',
+    csc: 'సమీప CSC వెతకండి',
+    simpleMode: 'సరళ మోడ్',
+    detailedMode: 'వివరణాత్మక',
+    sarkaricSahayakSub: 'ప్రభుత్వ సహాయకుడు · సరళ మోడ్',
+    typeHere: 'ఇక్కడ టైప్ చేయండి లేదా క్రింద మాట్లాడండి...',
+    shareBtn: 'Share',
+    helplineBtn: 'Helpline 155261',
+    findCSC: 'సమీప CSC వెతకండి',
+    today: 'ఈ రోజు',
+    docCheckTitle: 'పత్రాల తనిఖీ',
+    warningNote: 'గమనించండి: ఆధార్, భూమి పత్రాలు, బ్యాంక్ ఖాతాలో ఉన్న పేరు మూడూ ఒకేలా ఉండాలి. ఇదే తిరస్కరణకు అతిపెద్ద కారణం.',
+    required: 'అవసరం',
+    hasIt: 'అవును ఉంది',
+    noIt: 'లేదు',
+    readyStrip: '✓ సిద్ధంగా ఉంది',
+    notHave: '✗ లేదు — ఎక్కడ దొరుకుతుంది?',
+    allReady: 'మీరు పూర్తిగా సిద్ధంగా ఉన్నారు!',
+    allReadySub: 'అవసరమైన అన్ని పత్రాలు మీ వద్ద ఉన్నాయి — ఇప్పుడు CSC‌కి వెళ్లండి.',
+    findCSCMaps: 'సమీప CSC → Google Maps',
+    notReady: 'ఇప్పుడు CSC‌కి వెళ్లవద్దు',
+    missingDocs: (n: number) => n + ' పత్రాలు మిగిలి ఉన్నాయి — ముందుగా వీటిని చేయండి:',
+    findOnMaps: 'ఈ ప్రదేశాలను Maps‌లో వెతకండి',
+    goAnyway: 'అయినా CSC‌కి వెళ్లండి (Risk‌పై)',
+    cscSays: 'CSC వద్ద ఇలా చెప్పండి:',
+    sendWhatsApp: 'Script‌ను WhatsApp‌లో పంపండి',
+    newSearch: 'కొత్త శోధన ప్రారంభించండి ↺',
+    prepYes: 'అవును, తప్పకుండా',
+    prepNo: 'తర్వాత',
+    chipList: ['రైతు రుణం', 'ఇంటి సహాయం', 'పింఛను', 'మందులు', 'పిల్లల చదువు'],
+    recording: 'వింటున్నాను...',
+    transcribing: 'అర్థం చేసుకుంటున్నాను...',
+    voiceMicError: 'మైక్రోఫోన్ యాక్సెస్ దొరకలేదు. దయచేసి అనుమతి ఇచ్చి మళ్లీ ప్రయత్నించండి.',
+    voiceTranscribeError: 'మాటను అర్థం చేసుకోవడంలో సమస్య వచ్చింది. దయచేసి మళ్లీ ప్రయత్నించండి.',
+    voiceSessionExpiredError: 'మీ సెషన్ ముగిసింది. దయచేసి పేజీని రీలోడ్ చేసి మళ్లీ ప్రయత్నించండి.',
+    voiceEmptyError: 'ఏమీ వినిపించలేదు. దయచేసి మళ్లీ మాట్లాడండి.',
+    detectedLabel: 'మీరు చెప్పినదాని నుండి గుర్తించినది:',
+    detectedFemale: 'మహిళ',
+    detectedMale: 'పురుషుడు',
+    yearsOld: 'సంవత్సరాలు',
+    noRealMatches: 'మీ వివరాలకు సరిపోలే పథకాలు కనుగొనబడలేదు.',
+    speakBtn: 'మాట్లాడి వెతకండి',
+    pincodeLabel: 'మీ Pin Code నమోదు చేయండి:',
+    goBtn: 'Go',
+    voiceQuery: 'రైతు రుణాలు మరియు వ్యవసాయ పథకాల గురించి చెప్పండి',
+    progressLabel: (checked: number, total: number) => checked + ' / ' + total + ' సిద్ధం',
+    eligibleBadge: '✓ అర్హత',
+    verifyBadge: '⚠ తనిఖీ చేయండి',
+    howToGet: 'ఎలా పొందాలి?',
+    appStepsLabel: 'దరఖాస్తు దశలు:',
+    documentsLabel: 'పత్రాలు:',
+    commonDocsList: 'ఆధార్, బ్యాంక్ పాస్‌బుక్, గుర్తింపు కార్డు',
+    matchHigh: 'అధిక సరిపోలిక',
+    matchMedium: 'మధ్యస్థ సరిపోలిక',
+    matchStatusLabel: 'సరిపోలిక స్థితి:',
+    whatsappHeader: 'SuvidhaAI పథకాలు:',
+    homeLabel: 'హోమ్',
+    comingSoon: 'Full Mode — త్వరలో వస్తుంది',
+  },
+  'kn-IN': {
+    govSchemeHelper: 'ಸರ್ಕಾರಿ ಯೋಜನೆ ಸಹಾಯಕ',
+    sarkariSahayak: 'ಸರ್ಕಾರಿ ಸಹಾಯಕ',
+    activeConversation: 'ಪ್ರಸ್ತುತ ಸಂಭಾಷಣೆ',
+    farmerSearch: 'ರೈತ ಯೋಜನೆಗಳ ಹುಡುಕಾಟ',
+    farmerSearchSub: 'ನಾನು ಮಹಾರಾಷ್ಟ್ರದ ಒಬ್ಬ ರೈತ...',
+    whatsapp: 'WhatsApp‌ಗೆ ಕಳುಹಿಸಿ',
+    helpline: 'Helpline · 155261',
+    csc: 'ಹತ್ತಿರದ CSC ಹುಡುಕಿ',
+    simpleMode: 'ಸರಳ ಮೋಡ್',
+    detailedMode: 'ವಿವರವಾದ',
+    sarkaricSahayakSub: 'ಸರ್ಕಾರಿ ಸಹಾಯಕ · ಸರಳ ಮೋಡ್',
+    typeHere: 'ಇಲ್ಲಿ ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ಕೆಳಗೆ ಮಾತನಾಡಿ...',
+    shareBtn: 'Share',
+    helplineBtn: 'Helpline 155261',
+    findCSC: 'ಹತ್ತಿರದ CSC ಹುಡುಕಿ',
+    today: 'ಇಂದು',
+    docCheckTitle: 'ದಾಖಲೆ ಪರಿಶೀಲನೆ',
+    warningNote: 'ಗಮನಿಸಿ: ಆಧಾರ್, ಭೂ ದಾಖಲೆ, ಬ್ಯಾಂಕ್ ಖಾತೆಯಲ್ಲಿನ ಹೆಸರು ಎಲ್ಲವೂ ಒಂದೇ ರೀತಿ ಇರಬೇಕು. ಇದೇ ತಿರಸ್ಕಾರಕ್ಕೆ ದೊಡ್ಡ ಕಾರಣ.',
+    required: 'ಅಗತ್ಯ',
+    hasIt: 'ಹೌದು ಇದೆ',
+    noIt: 'ಇಲ್ಲ',
+    readyStrip: '✓ ಸಿದ್ಧವಾಗಿದೆ',
+    notHave: '✗ ಇಲ್ಲ — ಎಲ್ಲಿ ಸಿಗುತ್ತದೆ?',
+    allReady: 'ನೀವು ಸಂಪೂರ್ಣವಾಗಿ ಸಿದ್ಧರಿದ್ದೀರಿ!',
+    allReadySub: 'ಅಗತ್ಯವಿರುವ ಎಲ್ಲಾ ದಾಖಲೆಗಳು ನಿಮ್ಮ ಬಳಿ ಇವೆ — ಈಗ CSC‌ಗೆ ಹೋಗಿ.',
+    findCSCMaps: 'ಹತ್ತಿರದ CSC → Google Maps',
+    notReady: 'ಈಗ CSC‌ಗೆ ಹೋಗಬೇಡಿ',
+    missingDocs: (n: number) => n + ' ದಾಖಲೆಗಳು ಬಾಕಿ ಇವೆ — ಮೊದಲು ಇವುಗಳನ್ನು ಮಾಡಿ:',
+    findOnMaps: 'ಈ ಸ್ಥಳಗಳನ್ನು Maps‌ನಲ್ಲಿ ಹುಡುಕಿ',
+    goAnyway: 'ಆದರೂ CSC‌ಗೆ ಹೋಗಿ (Risk‌ನಲ್ಲಿ)',
+    cscSays: 'CSC‌ನಲ್ಲಿ ಇದನ್ನು ಹೇಳಿ:',
+    sendWhatsApp: 'Script ಅನ್ನು WhatsApp‌ನಲ್ಲಿ ಕಳುಹಿಸಿ',
+    newSearch: 'ಹೊಸ ಹುಡುಕಾಟ ಪ್ರಾರಂಭಿಸಿ ↺',
+    prepYes: 'ಹೌದು, ಖಂಡಿತ',
+    prepNo: 'ನಂತರ',
+    chipList: ['ರೈತ ಸಾಲ', 'ಮನೆ ಸಹಾಯ', 'ಪಿಂಚಣಿ', 'ಔಷಧಿಗಳು', 'ಮಕ್ಕಳ ಶಿಕ್ಷಣ'],
+    recording: 'ಕೇಳುತ್ತಿದ್ದೇನೆ...',
+    transcribing: 'ಅರ್ಥಮಾಡಿಕೊಳ್ಳುತ್ತಿದ್ದೇನೆ...',
+    voiceMicError: 'ಮೈಕ್ರೊಫೋನ್ ಪ್ರವೇಶ ಸಿಗಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಅನುಮತಿ ನೀಡಿ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.',
+    voiceTranscribeError: 'ಧ್ವನಿಯನ್ನು ಅರ್ಥಮಾಡಿಕೊಳ್ಳುವಲ್ಲಿ ಸಮಸ್ಯೆ ಆಯಿತು. ದಯವಿಟ್ಟು ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.',
+    voiceSessionExpiredError: 'ನಿಮ್ಮ ಸೆಷನ್ ಅವಧಿ ಮುಗಿದಿದೆ. ದಯವಿಟ್ಟು ಪುಟವನ್ನು ಮರುಲೋಡ್ ಮಾಡಿ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.',
+    voiceEmptyError: 'ಏನೂ ಕೇಳಿಸಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಮತ್ತೆ ಮಾತನಾಡಿ.',
+    detectedLabel: 'ನೀವು ಹೇಳಿದ್ದರಿಂದ ಗುರುತಿಸಲಾಗಿದೆ:',
+    detectedFemale: 'ಮಹಿಳೆ',
+    detectedMale: 'ಪುರುಷ',
+    yearsOld: 'ವರ್ಷ',
+    noRealMatches: 'ನಿಮ್ಮ ವಿವರಗಳಿಗೆ ಹೊಂದುವ ಯೋಜನೆಗಳು ಸಿಗಲಿಲ್ಲ.',
+    speakBtn: 'ಮಾತನಾಡಿ ಹುಡುಕಿ',
+    pincodeLabel: 'ನಿಮ್ಮ Pin Code ನಮೂದಿಸಿ:',
+    goBtn: 'Go',
+    voiceQuery: 'ರೈತ ಸಾಲ ಮತ್ತು ಕೃಷಿ ಯೋಜನೆಗಳ ಬಗ್ಗೆ ಹೇಳಿ',
+    progressLabel: (checked: number, total: number) => checked + ' / ' + total + ' ಸಿದ್ಧ',
+    eligibleBadge: '✓ ಅರ್ಹ',
+    verifyBadge: '⚠ ಪರಿಶೀಲಿಸಿ',
+    howToGet: 'ಹೇಗೆ ಪಡೆಯುವುದು?',
+    appStepsLabel: 'ಅರ್ಜಿ ಹಂತಗಳು:',
+    documentsLabel: 'ದಾಖಲೆಗಳು:',
+    commonDocsList: 'ಆಧಾರ್, ಬ್ಯಾಂಕ್ ಪಾಸ್‌ಬುಕ್, ಗುರುತಿನ ಚೀಟಿ',
+    matchHigh: 'ಹೆಚ್ಚಿನ ಹೊಂದಾಣಿಕೆ',
+    matchMedium: 'ಮಧ್ಯಮ ಹೊಂದಾಣಿಕೆ',
+    matchStatusLabel: 'ಹೊಂದಾಣಿಕೆ ಸ್ಥಿತಿ:',
+    whatsappHeader: 'SuvidhaAI ಯೋಜನೆಗಳು:',
+    homeLabel: 'ಮುಖಪುಟ',
+    comingSoon: 'Full Mode — ಶೀಘ್ರದಲ್ಲೇ ಬರುತ್ತಿದೆ',
+  },
+  'ml-IN': {
+    govSchemeHelper: 'സർക്കാർ പദ്ധതി സഹായി',
+    sarkariSahayak: 'സർക്കാർ സഹായി',
+    activeConversation: 'നിലവിലെ സംഭാഷണം',
+    farmerSearch: 'കർഷക പദ്ധതികളുടെ തിരയൽ',
+    farmerSearchSub: 'ഞാൻ മഹാരാഷ്ട്രയിൽ നിന്നുള്ള ഒരു കർഷകനാണ്...',
+    whatsapp: 'WhatsApp‌ൽ അയയ്ക്കുക',
+    helpline: 'Helpline · 155261',
+    csc: 'അടുത്തുള്ള CSC കണ്ടെത്തുക',
+    simpleMode: 'ലളിത മോഡ്',
+    detailedMode: 'വിശദമായ',
+    sarkaricSahayakSub: 'സർക്കാർ സഹായി · ലളിത മോഡ്',
+    typeHere: 'ഇവിടെ ടൈപ്പ് ചെയ്യുക അല്ലെങ്കിൽ താഴെ സംസാരിക്കുക...',
+    shareBtn: 'Share',
+    helplineBtn: 'Helpline 155261',
+    findCSC: 'അടുത്തുള്ള CSC കണ്ടെത്തുക',
+    today: 'ഇന്ന്',
+    docCheckTitle: 'രേഖ പരിശോധന',
+    warningNote: 'ശ്രദ്ധിക്കുക: ആധാർ, ഭൂരേഖ, ബാങ്ക് അക്കൗണ്ട് എന്നിവയിലെ പേര് മൂന്നും ഒരുപോലെ ആയിരിക്കണം. ഇതാണ് നിരസിക്കാനുള്ള പ്രധാന കാരണം.',
+    required: 'ആവശ്യമാണ്',
+    hasIt: 'അതെ ഉണ്ട്',
+    noIt: 'ഇല്ല',
+    readyStrip: '✓ തയ്യാറാണ്',
+    notHave: '✗ ഇല്ല — എവിടെ കിട്ടും?',
+    allReady: 'നിങ്ങൾ പൂർണ്ണമായി തയ്യാറാണ്!',
+    allReadySub: 'ആവശ്യമായ എല്ലാ രേഖകളും നിങ്ങളുടെ കൈവശമുണ്ട് — ഇപ്പോൾ CSC‌യിലേക്ക് പോകുക.',
+    findCSCMaps: 'അടുത്തുള്ള CSC → Google Maps',
+    notReady: 'ഇപ്പോൾ CSC‌യിലേക്ക് പോകരുത്',
+    missingDocs: (n: number) => n + ' രേഖകൾ ബാക്കിയുണ്ട് — ആദ്യം ഇവ ചെയ്യുക:',
+    findOnMaps: 'ഈ സ്ഥലങ്ങൾ Maps‌ൽ കണ്ടെത്തുക',
+    goAnyway: 'എന്നാലും CSC‌യിലേക്ക് പോകുക (Risk‌ൽ)',
+    cscSays: 'CSC‌യിൽ ഇത് പറയുക:',
+    sendWhatsApp: 'Script WhatsApp‌ൽ അയയ്ക്കുക',
+    newSearch: 'പുതിയ തിരയൽ ആരംഭിക്കുക ↺',
+    prepYes: 'അതെ, തീർച്ചയായും',
+    prepNo: 'പിന്നീട്',
+    chipList: ['കർഷക വായ്പ', 'വീട് സഹായം', 'പെൻഷൻ', 'മരുന്നുകൾ', 'കുട്ടികളുടെ വിദ്യാഭ്യാസം'],
+    recording: 'കേൾക്കുന്നു...',
+    transcribing: 'മനസ്സിലാക്കുന്നു...',
+    voiceMicError: 'മൈക്രോഫോൺ ആക്സസ് ലഭിച്ചില്ല. ദയവായി അനുമതി നൽകി വീണ്ടും ശ്രമിക്കുക.',
+    voiceTranscribeError: 'ശബ്ദം മനസ്സിലാക്കുന്നതിൽ പ്രശ്നമുണ്ടായി. ദയവായി വീണ്ടും ശ്രമിക്കുക.',
+    voiceSessionExpiredError: 'നിങ്ങളുടെ സെഷൻ കാലഹരണപ്പെട്ടു. ദയവായി പേജ് വീണ്ടും ലോഡ് ചെയ്ത് വീണ്ടും ശ്രമിക്കുക.',
+    voiceEmptyError: 'ഒന്നും കേട്ടില്ല. ദയവായി വീണ്ടും സംസാരിക്കുക.',
+    detectedLabel: 'നിങ്ങൾ പറഞ്ഞതിൽ നിന്ന് കണ്ടെത്തിയത്:',
+    detectedFemale: 'സ്ത്രീ',
+    detectedMale: 'പുരുഷൻ',
+    yearsOld: 'വയസ്സ്',
+    noRealMatches: 'നിങ്ങളുടെ വിവരങ്ങൾക്ക് അനുയോജ്യമായ പദ്ധതികൾ കണ്ടെത്തിയില്ല.',
+    speakBtn: 'സംസാരിച്ച് തിരയുക',
+    pincodeLabel: 'നിങ്ങളുടെ Pin Code നൽകുക:',
+    goBtn: 'Go',
+    voiceQuery: 'കർഷക വായ്പകളെയും കൃഷി പദ്ധതികളെയും കുറിച്ച് പറയുക',
+    progressLabel: (checked: number, total: number) => checked + ' / ' + total + ' തയ്യാർ',
+    eligibleBadge: '✓ യോഗ്യത',
+    verifyBadge: '⚠ പരിശോധിക്കുക',
+    howToGet: 'എങ്ങനെ ലഭിക്കും?',
+    appStepsLabel: 'അപേക്ഷാ ഘട്ടങ്ങൾ:',
+    documentsLabel: 'രേഖകൾ:',
+    commonDocsList: 'ആധാർ, ബാങ്ക് പാസ്ബുക്ക്, തിരിച്ചറിയൽ കാർഡ്',
+    matchHigh: 'ഉയർന്ന പൊരുത്തം',
+    matchMedium: 'ഇടത്തരം പൊരുത്തം',
+    matchStatusLabel: 'പൊരുത്ത നില:',
+    whatsappHeader: 'SuvidhaAI പദ്ധതികൾ:',
+    homeLabel: 'ഹോം',
+    comingSoon: 'Full Mode — ഉടൻ വരുന്നു',
+  },
+  'bn-IN': {
+    govSchemeHelper: 'সরকারি প্রকল্প সহায়ক',
+    sarkariSahayak: 'সরকারি সহায়ক',
+    activeConversation: 'চলমান কথোপকথন',
+    farmerSearch: 'কৃষক প্রকল্প অনুসন্ধান',
+    farmerSearchSub: 'আমি মহারাষ্ট্রের একজন কৃষক...',
+    whatsapp: 'WhatsApp‌এ পাঠান',
+    helpline: 'Helpline · 155261',
+    csc: 'নিকটতম CSC খুঁজুন',
+    simpleMode: 'সহজ মোড',
+    detailedMode: 'বিস্তারিত',
+    sarkaricSahayakSub: 'সরকারি সহায়ক · সহজ মোড',
+    typeHere: 'এখানে লিখুন অথবা নিচে বলুন...',
+    shareBtn: 'Share',
+    helplineBtn: 'Helpline 155261',
+    findCSC: 'নিকটতম CSC খুঁজুন',
+    today: 'আজ',
+    docCheckTitle: 'নথি পরীক্ষা',
+    warningNote: 'মনে রাখবেন: আধার, জমির কাগজ এবং ব্যাংক অ্যাকাউন্টে থাকা নাম তিনটেই একই রকম হতে হবে। এটাই প্রত্যাখ্যানের সবচেয়ে বড় কারণ।',
+    required: 'প্রয়োজনীয়',
+    hasIt: 'হ্যাঁ আছে',
+    noIt: 'না',
+    readyStrip: '✓ প্রস্তুত',
+    notHave: '✗ নেই — কোথায় পাওয়া যাবে?',
+    allReady: 'আপনি সম্পূর্ণ প্রস্তুত!',
+    allReadySub: 'প্রয়োজনীয় সব নথি আপনার কাছে আছে — এখনই CSC‌তে যান।',
+    findCSCMaps: 'নিকটতম CSC → Google Maps',
+    notReady: 'এখনই CSC‌তে যাবেন না',
+    missingDocs: (n: number) => n + ' টি নথি বাকি আছে — প্রথমে এগুলো করুন:',
+    findOnMaps: 'এই জায়গাগুলো Maps‌এ খুঁজুন',
+    goAnyway: 'তবুও CSC‌তে যান (নিজ দায়িত্বে)',
+    cscSays: 'CSC‌তে এটা বলুন:',
+    sendWhatsApp: 'Script WhatsApp‌এ পাঠান',
+    newSearch: 'নতুন অনুসন্ধান শুরু করুন ↺',
+    prepYes: 'হ্যাঁ, অবশ্যই',
+    prepNo: 'পরে',
+    chipList: ['কৃষক ঋণ', 'বাড়ির সাহায্য', 'পেনশন', 'ওষুধ', 'শিশুদের শিক্ষা'],
+    recording: 'শুনছি...',
+    transcribing: 'বুঝছি...',
+    voiceMicError: 'মাইক্রোফোন অ্যাক্সেস পাওয়া যায়নি। অনুগ্রহ করে অনুমতি দিন এবং আবার চেষ্টা করুন।',
+    voiceTranscribeError: 'কণ্ঠস্বর বুঝতে সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।',
+    voiceSessionExpiredError: 'আপনার সেশন শেষ হয়ে গেছে। অনুগ্রহ করে পেজটি পুনরায় লোড করে আবার চেষ্টা করুন।',
+    voiceEmptyError: 'কিছু শোনা যায়নি। অনুগ্রহ করে আবার বলুন।',
+    detectedLabel: 'আপনি যা বলেছেন তা থেকে বোঝা গেছে:',
+    detectedFemale: 'মহিলা',
+    detectedMale: 'পুরুষ',
+    yearsOld: 'বছর',
+    noRealMatches: 'আপনার তথ্যের সাথে মেলে এমন কোনো প্রকল্প পাওয়া যায়নি।',
+    speakBtn: 'বলে খুঁজুন',
+    pincodeLabel: 'আপনার Pin Code লিখুন:',
+    goBtn: 'Go',
+    voiceQuery: 'কৃষক ঋণ এবং কৃষি প্রকল্প সম্পর্কে বলুন',
+    progressLabel: (checked: number, total: number) => checked + ' / ' + total + ' প্রস্তুত',
+    eligibleBadge: '✓ যোগ্য',
+    verifyBadge: '⚠ যাচাই করুন',
+    howToGet: 'কীভাবে পাবেন?',
+    appStepsLabel: 'আবেদনের ধাপ:',
+    documentsLabel: 'নথি:',
+    commonDocsList: 'আধার, ব্যাংক পাসবই, পরিচয়পত্র',
+    matchHigh: 'উচ্চ মিল',
+    matchMedium: 'মাঝারি মিল',
+    matchStatusLabel: 'মিলের অবস্থা:',
+    whatsappHeader: 'SuvidhaAI প্রকল্প:',
+    homeLabel: 'হোম',
+    comingSoon: 'Full Mode — শীঘ্রই আসছে',
+  },
+  'gu-IN': {
+    govSchemeHelper: 'સરકારી યોજના સહાયક',
+    sarkariSahayak: 'સરકારી સહાયક',
+    activeConversation: 'ચાલુ વાતચીત',
+    farmerSearch: 'ખેડૂત યોજના શોધ',
+    farmerSearchSub: 'હું મહારાષ્ટ્રનો એક ખેડૂત છું...',
+    whatsapp: 'WhatsApp પર મોકલો',
+    helpline: 'Helpline · 155261',
+    csc: 'નજીકનું CSC શોધો',
+    simpleMode: 'સરળ મોડ',
+    detailedMode: 'વિગતવાર',
+    sarkaricSahayakSub: 'સરકારી સહાયક · સરળ મોડ',
+    typeHere: 'અહીં લખો અથવા નીચે બોલો...',
+    shareBtn: 'Share',
+    helplineBtn: 'Helpline 155261',
+    findCSC: 'નજીકનું CSC શોધો',
+    today: 'આજે',
+    docCheckTitle: 'દસ્તાવેજ ચકાસણી',
+    warningNote: 'ધ્યાન રાખો: આધાર, જમીનના કાગળો અને બેંક ખાતામાં રહેલું નામ ત્રણેય એકસરખું હોવું જોઈએ. આ જ નકારવાનું સૌથી મોટું કારણ છે.',
+    required: 'જરૂરી',
+    hasIt: 'હા છે',
+    noIt: 'ના',
+    readyStrip: '✓ તૈયાર છે',
+    notHave: '✗ નથી — ક્યાંથી મળશે?',
+    allReady: 'તમે સંપૂર્ણપણે તૈયાર છો!',
+    allReadySub: 'જરૂરી બધા દસ્તાવેજો તમારી પાસે છે — હવે CSC પર જાઓ.',
+    findCSCMaps: 'નજીકનું CSC → Google Maps',
+    notReady: 'અત્યારે CSC પર ન જાઓ',
+    missingDocs: (n: number) => n + ' દસ્તાવેજો બાકી છે — પહેલા આ કરો:',
+    findOnMaps: 'આ સ્થળો Maps પર શોધો',
+    goAnyway: 'તો પણ CSC પર જાઓ (Risk પર)',
+    cscSays: 'CSC પર આ કહો:',
+    sendWhatsApp: 'Script WhatsApp પર મોકલો',
+    newSearch: 'નવી શોધ શરૂ કરો ↺',
+    prepYes: 'હા, જરૂર',
+    prepNo: 'પછી',
+    chipList: ['ખેડૂત લોન', 'ઘરની મદદ', 'પેન્શન', 'દવાઓ', 'બાળકોનું શિક્ષણ'],
+    recording: 'સાંભળી રહ્યો છું...',
+    transcribing: 'સમજી રહ્યો છું...',
+    voiceMicError: 'માઇક્રોફોન એક્સેસ મળ્યો નથી. કૃપા કરી પરવાનગી આપો અને ફરી પ્રયાસ કરો.',
+    voiceTranscribeError: 'અવાજ સમજવામાં સમસ્યા આવી. કૃપા કરી ફરી પ્રયાસ કરો.',
+    voiceSessionExpiredError: 'તમારું સત્ર સમાપ્ત થયું છે. કૃપા કરી પેજ ફરી લોડ કરો અને ફરી પ્રયાસ કરો.',
+    voiceEmptyError: 'કંઈ સંભળાયું નહીં. કૃપા કરી ફરી બોલો.',
+    detectedLabel: 'તમે જે કહ્યું તેના પરથી સમજાયું:',
+    detectedFemale: 'મહિલા',
+    detectedMale: 'પુરુષ',
+    yearsOld: 'વર્ષ',
+    noRealMatches: 'તમારી વિગતો માટે કોઈ યોજના મળી નથી.',
+    speakBtn: 'બોલીને શોધો',
+    pincodeLabel: 'તમારો Pin Code દાખલ કરો:',
+    goBtn: 'Go',
+    voiceQuery: 'ખેડૂત લોન અને ખેતીની યોજનાઓ વિશે જણાવો',
+    progressLabel: (checked: number, total: number) => checked + ' / ' + total + ' તૈયાર',
+    eligibleBadge: '✓ પાત્ર',
+    verifyBadge: '⚠ ચકાસો',
+    howToGet: 'કેવી રીતે મળશે?',
+    appStepsLabel: 'અરજીના પગલાં:',
+    documentsLabel: 'દસ્તાવેજો:',
+    commonDocsList: 'આધાર, બેંક પાસબુક, ઓળખપત્ર',
+    matchHigh: 'ઉચ્ચ મેળ',
+    matchMedium: 'મધ્યમ મેળ',
+    matchStatusLabel: 'મેળ સ્થિતિ:',
+    whatsappHeader: 'SuvidhaAI યોજનાઓ:',
+    homeLabel: 'હોમ',
+    comingSoon: 'Full Mode — ટૂંક સમયમાં આવે છે',
+  },
+  'pa-IN': {
+    govSchemeHelper: 'ਸਰਕਾਰੀ ਯੋਜਨਾ ਸਹਾਇਕ',
+    sarkariSahayak: 'ਸਰਕਾਰੀ ਸਹਾਇਕ',
+    activeConversation: 'ਚੱਲ ਰਹੀ ਗੱਲਬਾਤ',
+    farmerSearch: 'ਕਿਸਾਨ ਯੋਜਨਾ ਖੋਜ',
+    farmerSearchSub: 'ਮੈਂ ਮਹਾਰਾਸ਼ਟਰ ਤੋਂ ਇੱਕ ਕਿਸਾਨ ਹਾਂ...',
+    whatsapp: 'WhatsApp ਤੇ ਭੇਜੋ',
+    helpline: 'Helpline · 155261',
+    csc: 'ਨਜ਼ਦੀਕੀ CSC ਲੱਭੋ',
+    simpleMode: 'ਸਧਾਰਨ ਮੋਡ',
+    detailedMode: 'ਵਿਸਤ੍ਰਿਤ',
+    sarkaricSahayakSub: 'ਸਰਕਾਰੀ ਸਹਾਇਕ · ਸਧਾਰਨ ਮੋਡ',
+    typeHere: 'ਇੱਥੇ ਲਿਖੋ ਜਾਂ ਹੇਠਾਂ ਬੋਲੋ...',
+    shareBtn: 'Share',
+    helplineBtn: 'Helpline 155261',
+    findCSC: 'ਨਜ਼ਦੀਕੀ CSC ਲੱਭੋ',
+    today: 'ਅੱਜ',
+    docCheckTitle: 'ਦਸਤਾਵੇਜ਼ ਜਾਂਚ',
+    warningNote: 'ਧਿਆਨ ਰੱਖੋ: ਆਧਾਰ, ਜ਼ਮੀਨ ਦੇ ਕਾਗਜ਼ਾਤ ਅਤੇ ਬੈਂਕ ਖਾਤੇ ਵਿੱਚ ਨਾਮ ਤਿੰਨੋਂ ਬਿਲਕੁਲ ਇੱਕੋ ਜਿਹਾ ਹੋਣਾ ਚਾਹੀਦਾ ਹੈ। ਇਹੀ ਰੱਦ ਹੋਣ ਦਾ ਸਭ ਤੋਂ ਵੱਡਾ ਕਾਰਨ ਹੈ।',
+    required: 'ਜ਼ਰੂਰੀ',
+    hasIt: 'ਹਾਂ ਹੈ',
+    noIt: 'ਨਹੀਂ',
+    readyStrip: '✓ ਤਿਆਰ ਹੈ',
+    notHave: '✗ ਨਹੀਂ ਹੈ — ਕਿੱਥੇ ਮਿਲੇਗਾ?',
+    allReady: 'ਤੁਸੀਂ ਪੂਰੀ ਤਰ੍ਹਾਂ ਤਿਆਰ ਹੋ!',
+    allReadySub: 'ਸਾਰੇ ਜ਼ਰੂਰੀ ਦਸਤਾਵੇਜ਼ ਤੁਹਾਡੇ ਕੋਲ ਹਨ — ਹੁਣੇ CSC ਜਾਓ।',
+    findCSCMaps: 'ਨਜ਼ਦੀਕੀ CSC → Google Maps',
+    notReady: 'ਹੁਣੇ CSC ਨਾ ਜਾਓ',
+    missingDocs: (n: number) => n + ' ਦਸਤਾਵੇਜ਼ ਬਾਕੀ ਹਨ — ਪਹਿਲਾਂ ਇਹ ਕਰੋ:',
+    findOnMaps: 'ਇਹਨਾਂ ਥਾਵਾਂ ਨੂੰ Maps ਤੇ ਲੱਭੋ',
+    goAnyway: 'ਫਿਰ ਵੀ CSC ਜਾਓ (Risk ਤੇ)',
+    cscSays: 'CSC ਤੇ ਇਹ ਕਹੋ:',
+    sendWhatsApp: 'Script WhatsApp ਤੇ ਭੇਜੋ',
+    newSearch: 'ਨਵੀਂ ਖੋਜ ਸ਼ੁਰੂ ਕਰੋ ↺',
+    prepYes: 'ਹਾਂ, ਜ਼ਰੂਰ',
+    prepNo: 'ਬਾਅਦ ਵਿੱਚ',
+    chipList: ['ਕਿਸਾਨ ਕਰਜ਼ਾ', 'ਘਰ ਦੀ ਮਦਦ', 'ਪੈਨਸ਼ਨ', 'ਦਵਾਈਆਂ', 'ਬੱਚਿਆਂ ਦੀ ਪੜ੍ਹਾਈ'],
+    recording: 'ਸੁਣ ਰਿਹਾ ਹਾਂ...',
+    transcribing: 'ਸਮਝ ਰਿਹਾ ਹਾਂ...',
+    voiceMicError: 'ਮਾਈਕ੍ਰੋਫ਼ੋਨ ਪਹੁੰਚ ਨਹੀਂ ਮਿਲੀ। ਕਿਰਪਾ ਕਰਕੇ ਇਜਾਜ਼ਤ ਦਿਓ ਅਤੇ ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ।',
+    voiceTranscribeError: 'ਆਵਾਜ਼ ਸਮਝਣ ਵਿੱਚ ਸਮੱਸਿਆ ਆਈ। ਕਿਰਪਾ ਕਰਕੇ ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ।',
+    voiceSessionExpiredError: 'ਤੁਹਾਡਾ ਸੈਸ਼ਨ ਖਤਮ ਹੋ ਗਿਆ ਹੈ। ਕਿਰਪਾ ਕਰਕੇ ਪੇਜ ਦੁਬਾਰਾ ਲੋਡ ਕਰੋ ਅਤੇ ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ।',
+    voiceEmptyError: 'ਕੁਝ ਸੁਣਾਈ ਨਹੀਂ ਦਿੱਤਾ। ਕਿਰਪਾ ਕਰਕੇ ਦੁਬਾਰਾ ਬੋਲੋ।',
+    detectedLabel: 'ਤੁਹਾਡੀ ਗੱਲ ਤੋਂ ਸਮਝਿਆ:',
+    detectedFemale: 'ਔਰਤ',
+    detectedMale: 'ਆਦਮੀ',
+    yearsOld: 'ਸਾਲ',
+    noRealMatches: 'ਤੁਹਾਡੀ ਜਾਣਕਾਰੀ ਲਈ ਕੋਈ ਯੋਜਨਾ ਨਹੀਂ ਮਿਲੀ।',
+    speakBtn: 'ਬੋਲ ਕੇ ਖੋਜੋ',
+    pincodeLabel: 'ਆਪਣਾ Pin Code ਪਾਓ:',
+    goBtn: 'Go',
+    voiceQuery: 'ਕਿਸਾਨ ਕਰਜ਼ੇ ਅਤੇ ਖੇਤੀ ਦੀਆਂ ਯੋਜਨਾਵਾਂ ਬਾਰੇ ਦੱਸੋ',
+    progressLabel: (checked: number, total: number) => checked + ' / ' + total + ' ਤਿਆਰ',
+    eligibleBadge: '✓ ਯੋਗ',
+    verifyBadge: '⚠ ਜਾਂਚ ਕਰੋ',
+    howToGet: 'ਕਿਵੇਂ ਮਿਲੇਗਾ?',
+    appStepsLabel: 'ਅਰਜ਼ੀ ਦੇ ਪੜਾਅ:',
+    documentsLabel: 'ਦਸਤਾਵੇਜ਼:',
+    commonDocsList: 'ਆਧਾਰ, ਬੈਂਕ ਪਾਸਬੁੱਕ, ਪਛਾਣ ਪੱਤਰ',
+    matchHigh: 'ਉੱਚ ਮੇਲ',
+    matchMedium: 'ਮੱਧਮ ਮੇਲ',
+    matchStatusLabel: 'ਮੇਲ ਸਥਿਤੀ:',
+    whatsappHeader: 'SuvidhaAI ਯੋਜਨਾਵਾਂ:',
+    homeLabel: 'ਹੋਮ',
+    comingSoon: 'Full Mode — ਜਲਦੀ ਆ ਰਿਹਾ ਹੈ',
+  },
 }
 
 type UiStringsBundle = (typeof uiStrings)[UiLang];
@@ -301,12 +851,40 @@ const greetings: Record<UiLang, { msg1: string; msg2: string }> = {
     msg1: 'Hello! I am Suvidha Assistant.',
     msg2: 'Which government scheme would you like to know about? Tell me in Hindi, Marathi, or English.',
   },
+  'ta-IN': {
+    msg1: 'வணக்கம்! நான் சுவிதா உதவியாளர்.',
+    msg2: 'நீங்கள் எந்த அரசு திட்டத்தைப் பற்றி அறிய விரும்புகிறீர்கள்? தமிழில், இந்தியில், மராத்தியில் அல்லது எந்த மொழியிலும் சொல்லுங்கள்.',
+  },
+  'te-IN': {
+    msg1: 'నమస్కారం! నేను సువిధా సహాయకుడిని.',
+    msg2: 'మీరు ఏ ప్రభుత్వ పథకం గురించి తెలుసుకోవాలనుకుంటున్నారు? తెలుగులో, హిందీలో, మరాఠీలో లేదా ఏ భాషలోనైనా చెప్పండి.',
+  },
+  'kn-IN': {
+    msg1: 'ನಮಸ್ಕಾರ! ನಾನು ಸುವಿಧಾ ಸಹಾಯಕ.',
+    msg2: 'ನೀವು ಯಾವ ಸರ್ಕಾರಿ ಯೋಜನೆಯ ಬಗ್ಗೆ ತಿಳಿಯಲು ಬಯಸುತ್ತೀರಿ? ಕನ್ನಡದಲ್ಲಿ, ಹಿಂದಿಯಲ್ಲಿ, ಮರಾಠಿಯಲ್ಲಿ ಅಥವಾ ಯಾವುದೇ ಭಾಷೆಯಲ್ಲಿ ಹೇಳಿ.',
+  },
+  'ml-IN': {
+    msg1: 'നമസ്കാരം! ഞാൻ സുവിധാ സഹായി ആണ്.',
+    msg2: 'ഏത് സർക്കാർ പദ്ധതിയെക്കുറിച്ചാണ് നിങ്ങൾക്ക് അറിയേണ്ടത്? മലയാളത്തിൽ, ഹിന്ദിയിൽ, മറാഠിയിൽ അല്ലെങ്കിൽ ഏത് ഭാഷയിലും പറയുക.',
+  },
+  'bn-IN': {
+    msg1: 'নমস্কার! আমি সুবিধা সহায়ক।',
+    msg2: 'আপনি কোন সরকারি প্রকল্প সম্পর্কে জানতে চান? বাংলায়, হিন্দিতে, মারাঠিতে অথবা যেকোনো ভাষায় বলুন।',
+  },
+  'gu-IN': {
+    msg1: 'નમસ્તે! હું સુવિધા સહાયક છું.',
+    msg2: 'તમે કઈ સરકારી યોજના વિશે જાણવા માંગો છો? ગુજરાતીમાં, હિન્દીમાં, મરાઠીમાં અથવા કોઈપણ ભાષામાં કહો.',
+  },
+  'pa-IN': {
+    msg1: 'ਸਤ ਸ੍ਰੀ ਅਕਾਲ! ਮੈਂ ਸੁਵਿਧਾ ਸਹਾਇਕ ਹਾਂ।',
+    msg2: 'ਤੁਸੀਂ ਕਿਸ ਸਰਕਾਰੀ ਯੋਜਨਾ ਬਾਰੇ ਜਾਣਨਾ ਚਾਹੁੰਦੇ ਹੋ? ਪੰਜਾਬੀ ਵਿੱਚ, ਹਿੰਦੀ ਵਿੱਚ, ਮਰਾਠੀ ਵਿੱਚ ਜਾਂ ਕਿਸੇ ਵੀ ਭਾਸ਼ਾ ਵਿੱਚ ਦੱਸੋ।',
+  },
 };
 
 const botResponses = {
   'hi-IN': {
     processing: 'ठीक है, आपकी जानकारी के आधार पर, यहाँ कुछ योजनाएँ हैं:',
-    recommendation: (name: string) => 'सबसे पहले ' + name + ' करें — सबसे आसान और सबसे ज़्यादा फायदा।',
+    recommendation: (name: string) => 'सबसे पहले ' + name + ' के लिए आवेदन करें — सबसे आसान और सबसे ज़्यादा फायदा।',
     prepPromptText: 'CSC जाने से पहले क्या मैं आपको दस्तावेज़ जाँच में मदद करूं?',
     prepDecline: 'ठीक है। जब तैयार हों तब नीचे CSC खोजें दबाएं।',
     cscOpened: 'Google Maps खुल गया — नज़दीकी CSC केंद्र दिखाए गए हैं।',
@@ -316,7 +894,7 @@ const botResponses = {
   },
   'mr-IN': {
     processing: 'ठीक आहे, तुमच्या माहितीच्या आधारावर, येथे काही योजना आहेत:',
-    recommendation: (name: string) => 'प्रथम ' + name + ' करा — सर्वात सोपे आणि सर्वाधिक फायदा।',
+    recommendation: (name: string) => 'सर्वप्रथम ' + name + ' साठी अर्ज करा — सर्वात सोपे आणि सर्वाधिक फायदा।',
     prepPromptText: 'CSC ला जाण्यापूर्वी मी तुम्हाला कागदपत्र तपासणीत मदत करू का?',
     prepDecline: 'ठीक आहे। तयार असाल तेव्हा खाली CSC शोधा दाबा।',
     cscOpened: 'Google Maps उघडले — जवळचे CSC केंद्र दाखवले आहेत।',
@@ -333,7 +911,248 @@ const botResponses = {
     locationDenied: 'Could not get your location. Please enter your Pin Code.',
     pincodeResult: (pin: string) => 'Google Maps opened — CSC centres near ' + pin + ' are shown.',
     docWhere: (location: string) => 'You can get this at: ' + location,
+  },
+  'ta-IN': {
+    processing: 'சரி, உங்கள் தகவலின் அடிப்படையில், இங்கே சில திட்டங்கள் உள்ளன:',
+    recommendation: (name: string) => 'முதலில் ' + name + '-க்கு விண்ணப்பிக்கவும் — மிக எளிதானது மற்றும் அதிக பயனுள்ளது.',
+    prepPromptText: 'CSC-க்குச் செல்வதற்கு முன், ஆவண சரிபார்ப்பில் உங்களுக்கு உதவவா?',
+    prepDecline: 'சரி. தயாராகும்போது கீழே CSC தேடு என்பதை அழுத்தவும்.',
+    cscOpened: 'Google Maps திறக்கப்பட்டது — அருகிலுள்ள CSC மையங்கள் காட்டப்பட்டுள்ளன.',
+    locationDenied: 'உங்கள் இருப்பிடத்தைப் பெற முடியவில்லை. உங்கள் Pin Code-ஐச் சொல்லுங்கள்.',
+    pincodeResult: (pin: string) => 'Google Maps திறக்கப்பட்டது — ' + pin + ' அருகிலுள்ள CSC மையங்கள் காட்டப்பட்டுள்ளன.',
+    docWhere: (location: string) => 'இது இங்கே கிடைக்கும்: ' + location,
+  },
+  'te-IN': {
+    processing: 'సరే, మీ సమాచారం ఆధారంగా, ఇక్కడ కొన్ని పథకాలు ఉన్నాయి:',
+    recommendation: (name: string) => 'మొదట ' + name + ' కోసం దరఖాస్తు చేయండి — ఇది సులభమైనది మరియు ఎక్కువ ప్రయోజనకరమైనది.',
+    prepPromptText: 'CSC‌కి వెళ్లే ముందు, పత్రాల తనిఖీలో నేను మీకు సహాయం చేయనా?',
+    prepDecline: 'సరే. సిద్ధమైనప్పుడు క్రింద CSC వెతకండి నొక్కండి.',
+    cscOpened: 'Google Maps తెరవబడింది — సమీప CSC కేంద్రాలు చూపబడ్డాయి.',
+    locationDenied: 'మీ లొకేషన్ దొరకలేదు. మీ Pin Code చెప్పండి.',
+    pincodeResult: (pin: string) => 'Google Maps తెరవబడింది — ' + pin + ' సమీప CSC కేంద్రాలు చూపబడ్డాయి.',
+    docWhere: (location: string) => 'ఇది ఇక్కడ దొరుకుతుంది: ' + location,
+  },
+  'kn-IN': {
+    processing: 'ಸರಿ, ನಿಮ್ಮ ಮಾಹಿತಿಯ ಆಧಾರದ ಮೇಲೆ, ಇಲ್ಲಿ ಕೆಲವು ಯೋಜನೆಗಳಿವೆ:',
+    recommendation: (name: string) => 'ಮೊದಲು ' + name + 'ಗೆ ಅರ್ಜಿ ಸಲ್ಲಿಸಿ — ಇದು ಸುಲಭ ಮತ್ತು ಹೆಚ್ಚು ಪ್ರಯೋಜನಕಾರಿ.',
+    prepPromptText: 'CSC‌ಗೆ ಹೋಗುವ ಮೊದಲು, ದಾಖಲೆ ಪರಿಶೀಲನೆಯಲ್ಲಿ ನಾನು ನಿಮಗೆ ಸಹಾಯ ಮಾಡಲೇ?',
+    prepDecline: 'ಸರಿ. ಸಿದ್ಧರಾದಾಗ ಕೆಳಗೆ CSC ಹುಡುಕಿ ಒತ್ತಿ.',
+    cscOpened: 'Google Maps ತೆರೆಯಲಾಗಿದೆ — ಹತ್ತಿರದ CSC ಕೇಂದ್ರಗಳನ್ನು ತೋರಿಸಲಾಗಿದೆ.',
+    locationDenied: 'ನಿಮ್ಮ ಸ್ಥಳ ಸಿಗಲಿಲ್ಲ. ನಿಮ್ಮ Pin Code ಹೇಳಿ.',
+    pincodeResult: (pin: string) => 'Google Maps ತೆರೆಯಲಾಗಿದೆ — ' + pin + ' ಹತ್ತಿರದ CSC ಕೇಂದ್ರಗಳನ್ನು ತೋರಿಸಲಾಗಿದೆ.',
+    docWhere: (location: string) => 'ಇದು ಇಲ್ಲಿ ಸಿಗುತ್ತದೆ: ' + location,
+  },
+  'ml-IN': {
+    processing: 'ശരി, നിങ്ങളുടെ വിവരങ്ങളുടെ അടിസ്ഥാനത്തിൽ, ഇതാ ചില പദ്ധതികൾ:',
+    recommendation: (name: string) => 'ആദ്യം ' + name + 'ന് അപേക്ഷിക്കുക — ഇത് ഏറ്റവും എളുപ്പവും കൂടുതൽ പ്രയോജനകരവുമാണ്.',
+    prepPromptText: 'CSC‌യിലേക്ക് പോകുന്നതിന് മുമ്പ്, രേഖ പരിശോധനയിൽ ഞാൻ നിങ്ങളെ സഹായിക്കട്ടെ?',
+    prepDecline: 'ശരി. തയ്യാറാകുമ്പോൾ താഴെ CSC കണ്ടെത്തുക അമർത്തുക.',
+    cscOpened: 'Google Maps തുറന്നു — അടുത്തുള്ള CSC കേന്ദ്രങ്ങൾ കാണിച്ചിരിക്കുന്നു.',
+    locationDenied: 'നിങ്ങളുടെ ലൊക്കേഷൻ ലഭിച്ചില്ല. നിങ്ങളുടെ Pin Code പറയുക.',
+    pincodeResult: (pin: string) => 'Google Maps തുറന്നു — ' + pin + ' അടുത്തുള്ള CSC കേന്ദ്രങ്ങൾ കാണിച്ചിരിക്കുന്നു.',
+    docWhere: (location: string) => 'ഇത് ഇവിടെ ലഭിക്കും: ' + location,
+  },
+  'bn-IN': {
+    processing: 'ঠিক আছে, আপনার তথ্যের ভিত্তিতে, এখানে কিছু প্রকল্প রয়েছে:',
+    recommendation: (name: string) => 'প্রথমে ' + name + '-এর জন্য আবেদন করুন — এটি সবচেয়ে সহজ এবং সবচেয়ে উপকারী।',
+    prepPromptText: 'CSC‌তে যাওয়ার আগে, নথি পরীক্ষায় আমি কি আপনাকে সাহায্য করব?',
+    prepDecline: 'ঠিক আছে। প্রস্তুত হলে নিচে CSC খুঁজুন চাপুন।',
+    cscOpened: 'Google Maps খোলা হয়েছে — নিকটতম CSC কেন্দ্রগুলো দেখানো হয়েছে।',
+    locationDenied: 'আপনার অবস্থান পাওয়া যায়নি। আপনার Pin Code বলুন।',
+    pincodeResult: (pin: string) => 'Google Maps খোলা হয়েছে — ' + pin + ' এর নিকটতম CSC কেন্দ্রগুলো দেখানো হয়েছে।',
+    docWhere: (location: string) => 'এটি এখানে পাওয়া যাবে: ' + location,
+  },
+  'gu-IN': {
+    processing: 'ઠીક છે, તમારી માહિતીના આધારે, અહીં કેટલીક યોજનાઓ છે:',
+    recommendation: (name: string) => 'પહેલા ' + name + ' માટે અરજી કરો — તે સૌથી સરળ અને સૌથી ફાયદાકારક છે.',
+    prepPromptText: 'CSC પર જતા પહેલા, શું હું તમને દસ્તાવેજ ચકાસણીમાં મદદ કરું?',
+    prepDecline: 'ઠીક છે. તૈયાર થાઓ ત્યારે નીચે CSC શોધો દબાવો.',
+    cscOpened: 'Google Maps ખૂલી ગયું — નજીકના CSC કેન્દ્રો બતાવવામાં આવ્યા છે.',
+    locationDenied: 'તમારું લોકેશન મળ્યું નથી. તમારો Pin Code જણાવો.',
+    pincodeResult: (pin: string) => 'Google Maps ખૂલી ગયું — ' + pin + ' ની નજીકના CSC કેન્દ્રો બતાવવામાં આવ્યા છે.',
+    docWhere: (location: string) => 'આ અહીં મળશે: ' + location,
+  },
+  'pa-IN': {
+    processing: 'ਠੀਕ ਹੈ, ਤੁਹਾਡੀ ਜਾਣਕਾਰੀ ਦੇ ਆਧਾਰ ਤੇ, ਇੱਥੇ ਕੁਝ ਯੋਜਨਾਵਾਂ ਹਨ:',
+    recommendation: (name: string) => 'ਪਹਿਲਾਂ ' + name + ' ਲਈ ਅਰਜ਼ੀ ਦਿਓ — ਇਹ ਸਭ ਤੋਂ ਆਸਾਨ ਅਤੇ ਸਭ ਤੋਂ ਵੱਧ ਲਾਭਦਾਇਕ ਹੈ।',
+    prepPromptText: 'CSC ਜਾਣ ਤੋਂ ਪਹਿਲਾਂ, ਕੀ ਮੈਂ ਤੁਹਾਡੀ ਦਸਤਾਵੇਜ਼ ਜਾਂਚ ਵਿੱਚ ਮਦਦ ਕਰਾਂ?',
+    prepDecline: 'ਠੀਕ ਹੈ। ਜਦੋਂ ਤਿਆਰ ਹੋਵੋ ਤਾਂ ਹੇਠਾਂ CSC ਲੱਭੋ ਦਬਾਓ।',
+    cscOpened: 'Google Maps ਖੁੱਲ੍ਹ ਗਿਆ — ਨਜ਼ਦੀਕੀ CSC ਕੇਂਦਰ ਦਿਖਾਏ ਗਏ ਹਨ।',
+    locationDenied: 'ਤੁਹਾਡੀ ਲੋਕੇਸ਼ਨ ਨਹੀਂ ਮਿਲੀ। ਆਪਣਾ Pin Code ਦੱਸੋ।',
+    pincodeResult: (pin: string) => 'Google Maps ਖੁੱਲ੍ਹ ਗਿਆ — ' + pin + ' ਦੇ ਨਜ਼ਦੀਕੀ CSC ਕੇਂਦਰ ਦਿਖਾਏ ਗਏ ਹਨ।',
+    docWhere: (location: string) => 'ਇਹ ਇੱਥੇ ਮਿਲੇਗਾ: ' + location,
+  },
+}
+
+// ---------------------------------------------------------------------------
+// Localization for the real-scheme match-reason chips and warnings that come
+// back from POST /schemes/voice-search (backend/app/api/v1/schemes.py's
+// _to_scheme_match, fed by Member 2's matching_service.py). That backend
+// deliberately returns a fixed set of English `factor` codes plus semi-
+// structured `matched` values (e.g. "no income cap", "≤ ₹50,000",
+// "12-18 yrs", raw occupation/gender codes) — it's Member 2's file, out of
+// scope to change here, so translation happens on this side by pattern-
+// matching those known shapes rather than editing the API response.
+// Anything that doesn't match a known shape (e.g. a scheme's own free-text
+// `warning` from the DB) is passed through in English rather than guessed at
+// — see the B3/B4 data-quality report for why guessing at a translation here
+// would be worse than showing English.
+const MATCH_FACTOR_LABELS: Record<UiLang, Record<string, string>> = {
+  'hi-IN': { occupation: 'पेशा', income: 'आय', state: 'राज्य', gender: 'लिंग', age: 'आयु', semantic_query: 'सिमेंटिक क्वेरी' },
+  'mr-IN': { occupation: 'व्यवसाय', income: 'उत्पन्न', state: 'राज्य', gender: 'लिंग', age: 'वय', semantic_query: 'सिमेंटिक क्वेरी' },
+  'en-IN': { occupation: 'Occupation', income: 'Income', state: 'State', gender: 'Gender', age: 'Age', semantic_query: 'Semantic Query' },
+  'ta-IN': { occupation: 'தொழில்', income: 'வருமானம்', state: 'மாநிலம்', gender: 'பாலினம்', age: 'வயது', semantic_query: 'சொற்பொருள் வினவல்' },
+  'te-IN': { occupation: 'వృత్తి', income: 'ఆదాయం', state: 'రాష్ట్రం', gender: 'లింగం', age: 'వయస్సు', semantic_query: 'సెమాంటిక్ క్వెరీ' },
+  'kn-IN': { occupation: 'ವೃತ್ತಿ', income: 'ಆದಾಯ', state: 'ರಾಜ್ಯ', gender: 'ಲಿಂಗ', age: 'ವಯಸ್ಸು', semantic_query: 'ಸೆಮ್ಯಾಂಟಿಕ್ ಕ್ವೆರಿ' },
+  'ml-IN': { occupation: 'തൊഴിൽ', income: 'വരുമാനം', state: 'സംസ്ഥാനം', gender: 'ലിംഗം', age: 'പ്രായം', semantic_query: 'സെമാന്റിക് ക്വറി' },
+  'bn-IN': { occupation: 'পেশা', income: 'আয়', state: 'রাজ্য', gender: 'লিঙ্গ', age: 'বয়স', semantic_query: 'সিমান্টিক কোয়েরি' },
+  'gu-IN': { occupation: 'વ્યવસાય', income: 'આવક', state: 'રાજ્ય', gender: 'લિંગ', age: 'ઉંમર', semantic_query: 'સિમેન્ટિક ક્વેરી' },
+  'pa-IN': { occupation: 'ਕਿੱਤਾ', income: 'ਆਮਦਨ', state: 'ਰਾਜ', gender: 'ਲਿੰਗ', age: 'ਉਮਰ', semantic_query: 'ਸਿਮੈਂਟਿਕ ਕਿਊਰੀ' },
+};
+
+const MATCH_VOCAB: Record<UiLang, {
+  noIncomeCap: string;
+  centralScheme: string;
+  relevantToQuery: string;
+  upToAmount: (amount: string) => string;
+  occupations: Record<string, string>;
+  genders: Record<string, string>;
+}> = {
+  'hi-IN': {
+    noIncomeCap: 'कोई आय सीमा नहीं', centralScheme: 'केंद्रीय योजना', relevantToQuery: 'आपकी खोज से संबंधित',
+    upToAmount: (a) => `₹${a} तक`,
+    occupations: { business_owner: 'व्यवसाय स्वामी', 'construction worker': 'निर्माण श्रमिक', engineer: 'इंजीनियर', entrepreneur: 'उद्यमी', 'ex-serviceman': 'भूतपूर्व सैनिक', farmer: 'किसान', fisherman: 'मछुआरा', 'folk artist': 'लोक कलाकार', 'government employee': 'सरकारी कर्मचारी', 'sanitation worker': 'सफाई कर्मचारी', student: 'छात्र', tailor: 'दर्जी' },
+    genders: { female: 'महिला', male: 'पुरुष' },
+  },
+  'mr-IN': {
+    noIncomeCap: 'उत्पन्नाची कोणतीही मर्यादा नाही', centralScheme: 'केंद्रीय योजना', relevantToQuery: 'तुमच्या शोधाशी संबंधित',
+    upToAmount: (a) => `₹${a} पर्यंत`,
+    occupations: { business_owner: 'व्यवसाय मालक', 'construction worker': 'बांधकाम कामगार', engineer: 'अभियंता', entrepreneur: 'उद्योजक', 'ex-serviceman': 'माजी सैनिक', farmer: 'शेतकरी', fisherman: 'मच्छीमार', 'folk artist': 'लोककलाकार', 'government employee': 'सरकारी कर्मचारी', 'sanitation worker': 'सफाई कामगार', student: 'विद्यार्थी', tailor: 'शिंपी' },
+    genders: { female: 'महिला', male: 'पुरुष' },
+  },
+  'en-IN': {
+    noIncomeCap: 'no income cap', centralScheme: 'central scheme', relevantToQuery: 'relevant to your query',
+    upToAmount: (a) => `≤ ₹${a}`,
+    occupations: {}, genders: {},
+  },
+  'ta-IN': {
+    noIncomeCap: 'வருமான வரம்பு இல்லை', centralScheme: 'மத்திய அரசு திட்டம்', relevantToQuery: 'உங்கள் தேடலுடன் தொடர்புடையது',
+    upToAmount: (a) => `₹${a} வரை`,
+    occupations: { business_owner: 'வணிக உரிமையாளர்', 'construction worker': 'கட்டுமானத் தொழிலாளி', engineer: 'பொறியாளர்', entrepreneur: 'தொழில்முனைவோர்', 'ex-serviceman': 'முன்னாள் ராணுவ வீரர்', farmer: 'விவசாயி', fisherman: 'மீனவர்', 'folk artist': 'நாட்டுப்புற கலைஞர்', 'government employee': 'அரசு ஊழியர்', 'sanitation worker': 'தூய்மைப் பணியாளர்', student: 'மாணவர்', tailor: 'தையல்காரர்' },
+    genders: { female: 'பெண்', male: 'ஆண்' },
+  },
+  'te-IN': {
+    noIncomeCap: 'ఆదాయ పరిమితి లేదు', centralScheme: 'కేంద్ర పథకం', relevantToQuery: 'మీ శోధనకు సంబంధించినది',
+    upToAmount: (a) => `₹${a} వరకు`,
+    occupations: { business_owner: 'వ్యాపార యజమాని', 'construction worker': 'నిర్మాణ కార్మికుడు', engineer: 'ఇంజనీర్', entrepreneur: 'వ్యవస్థాపకుడు', 'ex-serviceman': 'మాజీ సైనికుడు', farmer: 'రైతు', fisherman: 'జాలరి', 'folk artist': 'జానపద కళాకారుడు', 'government employee': 'ప్రభుత్వ ఉద్యోగి', 'sanitation worker': 'పారిశుద్ధ్య కార్మికుడు', student: 'విద్యార్థి', tailor: 'దర్జీ' },
+    genders: { female: 'మహిళ', male: 'పురుషుడు' },
+  },
+  'kn-IN': {
+    noIncomeCap: 'ಆದಾಯ ಮಿತಿ ಇಲ್ಲ', centralScheme: 'ಕೇಂದ್ರ ಯೋಜನೆ', relevantToQuery: 'ನಿಮ್ಮ ಹುಡುಕಾಟಕ್ಕೆ ಸಂಬಂಧಿಸಿದೆ',
+    upToAmount: (a) => `₹${a} ವರೆಗೆ`,
+    occupations: { business_owner: 'ವ್ಯಾಪಾರ ಮಾಲೀಕ', 'construction worker': 'ಕಟ್ಟಡ ಕಾರ್ಮಿಕ', engineer: 'ಎಂಜಿನಿಯರ್', entrepreneur: 'ಉದ್ಯಮಿ', 'ex-serviceman': 'ಮಾಜಿ ಸೈನಿಕ', farmer: 'ರೈತ', fisherman: 'ಮೀನುಗಾರ', 'folk artist': 'ಜಾನಪದ ಕಲಾವಿದ', 'government employee': 'ಸರ್ಕಾರಿ ನೌಕರ', 'sanitation worker': 'ಸ್ವಚ್ಛತಾ ಕಾರ್ಮಿಕ', student: 'ವಿದ್ಯಾರ್ಥಿ', tailor: 'ದರ್ಜಿ' },
+    genders: { female: 'ಮಹಿಳೆ', male: 'ಪುರುಷ' },
+  },
+  'ml-IN': {
+    noIncomeCap: 'വരുമാന പരിധി ഇല്ല', centralScheme: 'കേന്ദ്ര പദ്ധതി', relevantToQuery: 'നിങ്ങളുടെ തിരയലുമായി ബന്ധപ്പെട്ടത്',
+    upToAmount: (a) => `₹${a} വരെ`,
+    occupations: { business_owner: 'ബിസിനസ് ഉടമ', 'construction worker': 'നിർമ്മാണ തൊഴിലാളി', engineer: 'എഞ്ചിനീയർ', entrepreneur: 'സംരംഭകൻ', 'ex-serviceman': 'മുൻ സൈനികൻ', farmer: 'കർഷകൻ', fisherman: 'മത്സ്യത്തൊഴിലാളി', 'folk artist': 'നാടോടി കലാകാരൻ', 'government employee': 'സർക്കാർ ജീവനക്കാരൻ', 'sanitation worker': 'ശുചീകരണ തൊഴിലാളി', student: 'വിദ്യാർത്ഥി', tailor: 'തയ്യൽക്കാരൻ' },
+    genders: { female: 'സ്ത്രീ', male: 'പുരുഷൻ' },
+  },
+  'bn-IN': {
+    noIncomeCap: 'কোনো আয়ের সীমা নেই', centralScheme: 'কেন্দ্রীয় প্রকল্প', relevantToQuery: 'আপনার অনুসন্ধানের সাথে প্রাসঙ্গিক',
+    upToAmount: (a) => `₹${a} পর্যন্ত`,
+    occupations: { business_owner: 'ব্যবসার মালিক', 'construction worker': 'নির্মাণ শ্রমিক', engineer: 'প্রকৌশলী', entrepreneur: 'উদ্যোক্তা', 'ex-serviceman': 'প্রাক্তন সেনা সদস্য', farmer: 'কৃষক', fisherman: 'জেলে', 'folk artist': 'লোকশিল্পী', 'government employee': 'সরকারি কর্মচারী', 'sanitation worker': 'পরিচ্ছন্নতা কর্মী', student: 'ছাত্র', tailor: 'দর্জি' },
+    genders: { female: 'মহিলা', male: 'পুরুষ' },
+  },
+  'gu-IN': {
+    noIncomeCap: 'કોઈ આવક મર્યાદા નથી', centralScheme: 'કેન્દ્રીય યોજના', relevantToQuery: 'તમારી શોધ સાથે સંબંધિત',
+    upToAmount: (a) => `₹${a} સુધી`,
+    occupations: { business_owner: 'વ્યવસાય માલિક', 'construction worker': 'બાંધકામ કામદાર', engineer: 'ઇજનેર', entrepreneur: 'ઉદ્યોગસાહસિક', 'ex-serviceman': 'ભૂતપૂર્વ સૈનિક', farmer: 'ખેડૂત', fisherman: 'માછીમાર', 'folk artist': 'લોક કલાકાર', 'government employee': 'સરકારી કર્મચારી', 'sanitation worker': 'સફાઈ કામદાર', student: 'વિદ્યાર્થી', tailor: 'દરજી' },
+    genders: { female: 'મહિલા', male: 'પુરુષ' },
+  },
+  'pa-IN': {
+    noIncomeCap: 'ਕੋਈ ਆਮਦਨ ਸੀਮਾ ਨਹੀਂ', centralScheme: 'ਕੇਂਦਰੀ ਯੋਜਨਾ', relevantToQuery: 'ਤੁਹਾਡੀ ਖੋਜ ਨਾਲ ਸੰਬੰਧਿਤ',
+    upToAmount: (a) => `₹${a} ਤੱਕ`,
+    occupations: { business_owner: 'ਵਪਾਰ ਮਾਲਕ', 'construction worker': 'ਉਸਾਰੀ ਮਜ਼ਦੂਰ', engineer: 'ਇੰਜੀਨੀਅਰ', entrepreneur: 'ਉੱਦਮੀ', 'ex-serviceman': 'ਸਾਬਕਾ ਫੌਜੀ', farmer: 'ਕਿਸਾਨ', fisherman: 'ਮਛੇਰਾ', 'folk artist': 'ਲੋਕ ਕਲਾਕਾਰ', 'government employee': 'ਸਰਕਾਰੀ ਮੁਲਾਜ਼ਮ', 'sanitation worker': 'ਸਫਾਈ ਕਰਮਚਾਰੀ', student: 'ਵਿਦਿਆਰਥੀ', tailor: 'ਦਰਜ਼ੀ' },
+    genders: { female: 'ਔਰਤ', male: 'ਆਦਮੀ' },
+  },
+};
+
+// The 4 "hard to get" doc labels matching_service.py title-cases from
+// HARD_TO_GET_DOCS (income_certificate, domicile_certificate, land_record,
+// crop_sowing_certificate) into its generated warning string.
+const DOC_LABEL_TRANSLATIONS: Record<UiLang, Record<string, string>> = {
+  'hi-IN': { 'Income Certificate': 'आय प्रमाण पत्र', 'Domicile Certificate': 'अधिवास प्रमाण पत्र', 'Land Record': 'भूमि रिकॉर्ड', 'Crop Sowing Certificate': 'फसल बुवाई प्रमाण पत्र' },
+  'mr-IN': { 'Income Certificate': 'उत्पन्नाचा दाखला', 'Domicile Certificate': 'अधिवास प्रमाणपत्र', 'Land Record': 'जमिनीचा दाखला', 'Crop Sowing Certificate': 'पीक पेरणी प्रमाणपत्र' },
+  'en-IN': { 'Income Certificate': 'Income Certificate', 'Domicile Certificate': 'Domicile Certificate', 'Land Record': 'Land Record', 'Crop Sowing Certificate': 'Crop Sowing Certificate' },
+  'ta-IN': { 'Income Certificate': 'வருமான சான்றிதழ்', 'Domicile Certificate': 'வதிவிட சான்றிதழ்', 'Land Record': 'நில ஆவணம்', 'Crop Sowing Certificate': 'பயிர் விதைப்பு சான்றிதழ்' },
+  'te-IN': { 'Income Certificate': 'ఆదాయ ధృవీకరణ పత్రం', 'Domicile Certificate': 'నివాస ధృవీకరణ పత్రం', 'Land Record': 'భూమి రికార్డు', 'Crop Sowing Certificate': 'పంట విత్తన ధృవీకరణ పత్రం' },
+  'kn-IN': { 'Income Certificate': 'ಆದಾಯ ಪ್ರಮಾಣಪತ್ರ', 'Domicile Certificate': 'ವಾಸಸ್ಥಳ ಪ್ರಮಾಣಪತ್ರ', 'Land Record': 'ಭೂ ದಾಖಲೆ', 'Crop Sowing Certificate': 'ಬೆಳೆ ಬಿತ್ತನೆ ಪ್ರಮಾಣಪತ್ರ' },
+  'ml-IN': { 'Income Certificate': 'വരുമാന സർട്ടിഫിക്കറ്റ്', 'Domicile Certificate': 'ഡൊമിസൈൽ സർട്ടിഫിക്കറ്റ്', 'Land Record': 'ഭൂരേഖ', 'Crop Sowing Certificate': 'വിള വിതയ്ക്കൽ സർട്ടിഫിക്കറ്റ്' },
+  'bn-IN': { 'Income Certificate': 'আয়ের সনদ', 'Domicile Certificate': 'আবাসিক সনদ', 'Land Record': 'জমির নথি', 'Crop Sowing Certificate': 'ফসল বপন সনদ' },
+  'gu-IN': { 'Income Certificate': 'આવકનું પ્રમાણપત્ર', 'Domicile Certificate': 'વસવાટનું પ્રમાણપત્ર', 'Land Record': 'જમીનનો રેકોર્ડ', 'Crop Sowing Certificate': 'પાક વાવણી પ્રમાણપત્ર' },
+  'pa-IN': { 'Income Certificate': 'ਆਮਦਨ ਸਰਟੀਫਿਕੇਟ', 'Domicile Certificate': 'ਡੋਮੀਸਾਈਲ ਸਰਟੀਫਿਕੇਟ', 'Land Record': 'ਜ਼ਮੀਨੀ ਰਿਕਾਰਡ', 'Crop Sowing Certificate': 'ਫਸਲ ਬਿਜਾਈ ਸਰਟੀਫਿਕੇਟ' },
+};
+
+function docRequiredWarning(docLabel: string, lang: UiLang): string {
+  if (lang === 'en-IN') return `${docLabel} required — verify before applying`;
+  const suffix: Record<UiLang, string> = {
+    'hi-IN': 'ज़रूरी है — आवेदन से पहले जाँच लें',
+    'mr-IN': 'आवश्यक आहे — अर्ज करण्यापूर्वी तपासा',
+    'en-IN': '',
+    'ta-IN': 'அவசியம் — விண்ணப்பிக்கும் முன் சரிபார்க்கவும்',
+    'te-IN': 'అవసరం — దరఖాస్తు చేయడానికి ముందు నిర్ధారించుకోండి',
+    'kn-IN': 'ಅಗತ್ಯ — ಅರ್ಜಿ ಸಲ್ಲಿಸುವ ಮೊದಲು ಪರಿಶೀಲಿಸಿ',
+    'ml-IN': 'ആവശ്യമാണ് — അപേക്ഷിക്കുന്നതിന് മുമ്പ് ഉറപ്പാക്കുക',
+    'bn-IN': 'প্রয়োজনীয় — আবেদনের আগে যাচাই করুন',
+    'gu-IN': 'જરૂરી છે — અરજી કરતા પહેલા ચકાસો',
+    'pa-IN': 'ਜ਼ਰੂਰੀ ਹੈ — ਅਰਜ਼ੀ ਦੇਣ ਤੋਂ ਪਹਿਲਾਂ ਜਾਂਚ ਕਰੋ',
+  };
+  const translatedDoc = DOC_LABEL_TRANSLATIONS[lang][docLabel] ?? docLabel;
+  return `${translatedDoc} ${suffix[lang]}`;
+}
+
+// backend/app/services/matching_service.py's MatchReason.matched values —
+// see that file's _score_scheme for the exact shapes this pattern-matches.
+function translateMatchedValue(factor: string, matched: string, lang: UiLang): string {
+  if (lang === 'en-IN') return matched;
+  const vocab = MATCH_VOCAB[lang];
+  switch (factor) {
+    case 'income': {
+      if (matched === 'no income cap') return vocab.noIncomeCap;
+      const m = matched.match(/^≤\s*₹([\d,]+)$/);
+      return m ? vocab.upToAmount(m[1]) : matched;
+    }
+    case 'state':
+      return matched === 'central scheme' ? vocab.centralScheme : matched;
+    case 'semantic_query':
+      return matched === 'relevant to your query' ? vocab.relevantToQuery : matched;
+    case 'gender':
+      return vocab.genders[matched] ?? matched;
+    case 'occupation':
+      return vocab.occupations[matched] ?? matched;
+    case 'age': {
+      const m = matched.match(/^(\d+)-(\d+|no cap) yrs$/);
+      if (!m) return matched;
+      const [, min, max] = m;
+      const yrs = uiStrings[lang].yearsOld;
+      return max === 'no cap' ? `${min}+ ${yrs}` : `${min}-${max} ${yrs}`;
+    }
+    default:
+      return matched;
   }
+}
+
+// Only the doc-required-before-applying warnings are backend-templated
+// (translatable here). A scheme's own free-text `warning` column from the DB
+// (e.g. "Girl child must be under 10 years") isn't — that's a data-quality
+// gap in Member 2's schemes table (see the B3/B4 report), not something safe
+// to guess-translate on eligibility-sensitive text.
+function translateWarningText(warning: string, lang: UiLang): string {
+  if (lang === 'en-IN') return warning;
+  const m = warning.match(/^(.+) required — verify before applying$/);
+  return m ? docRequiredWarning(m[1], lang) : warning;
 }
 
 const schemeData: Record<SchemeCategory, SchemeItem[]> = {
@@ -872,7 +1691,7 @@ const visitScripts = {
   },
 };
 
-const docLocationMap: Record<string, Record<UiLang, string>> = {
+const docLocationMap: Record<string, Record<DocCheckLang, string>> = {
   aadhaar: { 'hi-IN': 'आधार केंद्र या Post Office', 'mr-IN': 'आधार केंद्र किंवा पोस्ट ऑफिस', 'en-IN': 'Aadhaar Centre or Post Office' },
   passbook: { 'hi-IN': 'नज़दीकी बैंक शाखा', 'mr-IN': 'जवळची बँक शाखा', 'en-IN': 'Nearest bank branch' },
   khasra: { 'hi-IN': 'पटवारी कार्यालय या तहसील', 'mr-IN': 'तलाठी कार्यालय किंवा तहसील', 'en-IN': 'Patwari office or Tehsil office' },
@@ -936,7 +1755,7 @@ function DocVisualCard({
 
   const handleWhereClick = () => {
     const locMap = docLocationMap[doc.id] ?? docLocationMap.default;
-    const loc = locMap[lang] ?? locMap['hi-IN'];
+    const loc = locMap[toDocCheckLang(lang)] ?? locMap['hi-IN'];
     addMsg({ type: 'bot', text: resp.docWhere(loc), timestamp: getTime() });
   };
 
@@ -1022,7 +1841,7 @@ function DocVisualCard({
                 }}
               >
                 <ScanLine size={11} aria-hidden="true" />
-                {drt(DR.status[readinessResult.status], lang)}
+                {drt(DR.status[readinessResult.status], toDocCheckLang(lang))}
               </button>
             ) : (
               <button
@@ -1031,7 +1850,7 @@ function DocVisualCard({
                 className="w-full flex items-center justify-center gap-1 py-1.5 text-[10px] font-bold rounded-md border border-[#FED7AA] bg-[#FFF8F1] text-[#C2570A] hover:bg-[#FFEEDC]"
               >
                 <ScanLine size={11} aria-hidden="true" />
-                {drt(DR.common.checkDocument, lang)}
+                {drt(DR.common.checkDocument, toDocCheckLang(lang))}
               </button>
             )}
           </div>
@@ -1152,8 +1971,8 @@ function DocCheckCard({
         </div>
 
         <div className="bg-[#EFF6FF] border border-[#BFDBFE] rounded-[7px] py-2 px-2.5 mb-3.5">
-          <p className="text-[10px] text-[#1D4ED8] leading-[1.5]">{drt(DR.common.purposeStatement, lang)}</p>
-          <p className="text-[10px] text-[#1D4ED8] leading-[1.5] mt-1 opacity-80">{drt(DR.common.safetyNotice, lang)}</p>
+          <p className="text-[10px] text-[#1D4ED8] leading-[1.5]">{drt(DR.common.purposeStatement, toDocCheckLang(lang))}</p>
+          <p className="text-[10px] text-[#1D4ED8] leading-[1.5] mt-1 opacity-80">{drt(DR.common.safetyNotice, toDocCheckLang(lang))}</p>
         </div>
 
         <div className="doc-scroll flex gap-2.5 overflow-x-auto pb-2" style={{ WebkitOverflowScrolling: 'touch' }}>
@@ -1176,20 +1995,20 @@ function DocCheckCard({
 
         {anyReadinessChecked && (
           <div className="space-y-2.5 mt-3">
-            <NameConsistencyCard lang={lang} profileName={userName || '—'} comparisons={nameComparisons} compact />
-            <ReadinessSummary lang={lang} score={simpleScore} compact />
+            <NameConsistencyCard lang={toDocCheckLang(lang)} profileName={userName || '—'} comparisons={nameComparisons} compact />
+            <ReadinessSummary lang={toDocCheckLang(lang)} score={simpleScore} compact />
           </div>
         )}
 
         <Dialog open={!!openDocId} onOpenChange={(open) => !open && setOpenDocId(null)}>
           <DialogContent className="max-w-[420px] max-h-[85vh] overflow-y-auto bg-white p-5">
             <DialogHeader>
-              <DialogTitle className="sr-only">{openDoc ? getDocName(openDoc, lang) : drt(DR.common.title, lang)}</DialogTitle>
+              <DialogTitle className="sr-only">{openDoc ? getDocName(openDoc, lang) : drt(DR.common.title, toDocCheckLang(lang))}</DialogTitle>
             </DialogHeader>
             {openDoc && (
               <DocumentReadinessCheck
                 key={openDoc.id}
-                lang={lang}
+                lang={toDocCheckLang(lang)}
                 documentType={mapSimpleDocIdToType(openDoc.id)}
                 displayLabel={getDocName(openDoc, lang)}
                 expectedProfileName={userName || undefined}
@@ -1289,7 +2108,7 @@ function DocCheckCard({
                         {getDocName(d, lang)}
                         <span className="text-[11px] text-[#A8A29E] font-normal">
                           {' '}
-                          → {(docLocationMap[d.id] ?? docLocationMap.default)[lang]}
+                          → {(docLocationMap[d.id] ?? docLocationMap.default)[toDocCheckLang(lang)]}
                         </span>
                       </span>
                     </li>
@@ -1300,7 +2119,7 @@ function DocCheckCard({
                   className="w-full bg-[#D97706] text-white rounded-[9px] py-2.5 text-[13px] font-bold border-none cursor-pointer"
                   onClick={() =>
                     window.open(
-                      `https://www.google.com/maps/search/${encodeURIComponent((docLocationMap[missingDocs[0].id] ?? docLocationMap.default)[lang])}`,
+                      `https://www.google.com/maps/search/${encodeURIComponent((docLocationMap[missingDocs[0].id] ?? docLocationMap.default)[toDocCheckLang(lang)])}`,
                       '_blank'
                     )
                   }
@@ -1323,9 +2142,10 @@ function DocCheckCard({
   );
 }
 
+const KNOWN_UI_LANGS: readonly UiLang[] = ['hi-IN', 'mr-IN', 'en-IN', 'ta-IN', 'te-IN', 'kn-IN', 'ml-IN', 'bn-IN', 'gu-IN', 'pa-IN'];
+
 function resolveUiLang(code: string): UiLang {
-  if (code === 'mr-IN' || code === 'en-IN') return code;
-  return 'hi-IN';
+  return (KNOWN_UI_LANGS as readonly string[]).includes(code) ? (code as UiLang) : 'hi-IN';
 }
 
 function Waveform({ isRecording }: { isRecording: boolean }) {
@@ -1378,18 +2198,26 @@ export default function SimpleModePage() {
   const greetingStartedRef = useRef(false);
 
   useEffect(() => {
-    const handleFirstInteraction = () => {
-      if (!hasSpokenGreetingRef.current) {
-        hasSpokenGreetingRef.current = true;
-        const lang = selectedLangRef.current as UiLang;
-        const g = greetings[lang] || greetings['hi-IN'];
-        speak(g.msg1, lang);
-        setTimeout(() => speak(g.msg2, lang), 3000);
-      }
+    const handleFirstInteraction = (e: Event) => {
+      if (hasSpokenGreetingRef.current) return;
+      // Opening/using the language <select> is itself a click — if that's
+      // the very first gesture on the page (the common case: it's the first
+      // thing a new user touches), this used to lock in whatever language
+      // was selected BEFORE the user picked one (the default), and then
+      // never speak again for the rest of the session since this listener
+      // only ever fires once. handleLanguageChange now owns speaking the
+      // greeting for that gesture instead, with the language the user
+      // actually chose — so skip it here and wait for a real gesture.
+      if (e.target instanceof Element && e.target.closest('select')) return;
+      hasSpokenGreetingRef.current = true;
+      const lang = selectedLangRef.current as UiLang;
+      const g = greetings[lang] || greetings['hi-IN'];
+      speak(g.msg1, lang);
+      setTimeout(() => speak(g.msg2, lang), 3000);
     };
-    window.addEventListener('click', handleFirstInteraction, { once: true });
-    window.addEventListener('touchstart', handleFirstInteraction, { once: true });
-    window.addEventListener('keydown', handleFirstInteraction, { once: true });
+    window.addEventListener('click', handleFirstInteraction);
+    window.addEventListener('touchstart', handleFirstInteraction);
+    window.addEventListener('keydown', handleFirstInteraction);
     return () => {
       window.removeEventListener('click', handleFirstInteraction);
       window.removeEventListener('touchstart', handleFirstInteraction);
@@ -1423,6 +2251,11 @@ export default function SimpleModePage() {
   const latestCategory = useMemo(() => {
     const lastSchemes = [...messages].reverse().find((m) => m.type === 'schemes' && m.category);
     return (lastSchemes?.category as SchemeCategory | undefined) ?? 'farmer';
+  }, [messages]);
+
+  const latestRealResults = useMemo(() => {
+    const lastSchemes = [...messages].reverse().find((m) => m.type === 'schemes' && m.realResults);
+    return lastSchemes?.realResults ?? [];
   }, [messages]);
 
   const matchedSchemes = schemeData[latestCategory];
@@ -1511,49 +2344,81 @@ export default function SimpleModePage() {
   addMsg({ type: 'user', text: trimmed, timestamp: getTime() })
   setIsTyping(true)
 
+  // category still drives the (separate) document-readiness checklist —
+  // that flow is scoped by document type, not by which real schemes match.
   const category = getSchemesForQuery(trimmed)
   setDocCheckCategory(category)
-  const lang = selectedLangRef.current as UiLang
-  const resp = botResponses[lang] || botResponses['hi-IN']
-  const schemes = schemeData[category] || schemeData.farmer
-  const firstEligible = schemes.find(s => s.eligible) || schemes[0]
+  const voiceLang = toVoiceLanguage(selectedLangRef.current)
 
-  setTimeout(() => {
-    setIsTyping(false)
-    addMsg({ type: 'bot', text: resp.processing, timestamp: getTime() })
-  }, 1200)
+  searchSchemesFromVoiceText(trimmed, voiceLang, 10)
+    .then((data) => {
+      const results = data.results
 
-  setTimeout(() => {
-    addMsg({ type: 'schemes', category, timestamp: getTime() })
-    const lang = selectedLangRef.current as UiLang;
-    const schemes = schemeData[category] || schemeData.farmer;
-    const names = schemes.slice(0, 3).map(s => getSchemeName(s, lang)).join(', ');
-    const summaryTexts: Record<UiLang, string> = {
-      'hi-IN': `आपके लिए ${schemes.length} योजनाएं मिलीं: ${names}`,
-      'mr-IN': `तुमच्यासाठी ${schemes.length} योजना सापडल्या: ${names}`,
-      'en-IN': `Found ${schemes.length} schemes for you: ${names}`,
-    };
-    const summaryText = summaryTexts[lang as UiLang] || summaryTexts['hi-IN'];
-    setTimeout(() => {
-      if (autoSpeakRef.current) speak(summaryText, lang);
-    }, 400);
-  }, 1800)
+      setTimeout(() => {
+        setIsTyping(false)
+        const lang = selectedLangRef.current as UiLang
+        const resp = botResponses[lang] || botResponses['hi-IN']
+        addMsg({ type: 'bot', text: resp.processing, timestamp: getTime() })
+      }, 1200)
 
-    setTimeout(() => {
-      const curLang = selectedLangRef.current as UiLang;
-      addMsg({ type: 'bot', text: resp.recommendation(getSchemeName(firstEligible, curLang)), timestamp: getTime() })
-    }, 2600)
+      setTimeout(() => {
+        addMsg({ type: 'schemes', category, realResults: results, parsedProfile: data.parsed_profile, timestamp: getTime() })
+        const lang = selectedLangRef.current as UiLang;
+        const names = results.slice(0, 3).map(r => r.name).join(', ');
+        const summaryTexts: Record<UiLang, string> = {
+          'hi-IN': results.length ? `आपके लिए ${results.length} योजनाएं मिलीं: ${names}` : 'माफ़ कीजिए, आपकी जानकारी के लिए कोई योजना नहीं मिली।',
+          'mr-IN': results.length ? `तुमच्यासाठी ${results.length} योजना सापडल्या: ${names}` : 'माफ करा, तुमच्या माहितीसाठी कोणतीही योजना सापडली नाही.',
+          'en-IN': results.length ? `Found ${results.length} schemes for you: ${names}` : 'Sorry, no matching schemes were found for what you told me.',
+          'ta-IN': results.length ? `உங்களுக்காக ${results.length} திட்டங்கள் கிடைத்தன: ${names}` : 'மன்னிக்கவும், உங்கள் விவரங்களுக்கு பொருந்தும் திட்டங்கள் எதுவும் கிடைக்கவில்லை.',
+          'te-IN': results.length ? `మీ కోసం ${results.length} పథకాలు దొరికాయి: ${names}` : 'క్షమించండి, మీ వివరాలకు సరిపోలే పథకాలు కనుగొనబడలేదు.',
+          'kn-IN': results.length ? `ನಿಮಗಾಗಿ ${results.length} ಯೋಜನೆಗಳು ಸಿಕ್ಕಿವೆ: ${names}` : 'ಕ್ಷಮಿಸಿ, ನಿಮ್ಮ ವಿವರಗಳಿಗೆ ಹೊಂದುವ ಯೋಜನೆಗಳು ಸಿಗಲಿಲ್ಲ.',
+          'ml-IN': results.length ? `നിങ്ങൾക്കായി ${results.length} പദ്ധതികൾ കണ്ടെത്തി: ${names}` : 'ക്ഷമിക്കണം, നിങ്ങളുടെ വിവരങ്ങൾക്ക് അനുയോജ്യമായ പദ്ധതികൾ കണ്ടെത്തിയില്ല.',
+          'bn-IN': results.length ? `আপনার জন্য ${results.length} টি প্রকল্প পাওয়া গেছে: ${names}` : 'দুঃখিত, আপনার তথ্যের সাথে মেলে এমন কোনো প্রকল্প পাওয়া যায়নি।',
+          'gu-IN': results.length ? `તમારા માટે ${results.length} યોજનાઓ મળી: ${names}` : 'માફ કરશો, તમારી વિગતો માટે કોઈ યોજના મળી નથી.',
+          'pa-IN': results.length ? `ਤੁਹਾਡੇ ਲਈ ${results.length} ਯੋਜਨਾਵਾਂ ਮਿਲੀਆਂ: ${names}` : 'ਮਾਫ਼ ਕਰਨਾ, ਤੁਹਾਡੀ ਜਾਣਕਾਰੀ ਲਈ ਕੋਈ ਯੋਜਨਾ ਨਹੀਂ ਮਿਲੀ।',
+        };
+        const summaryText = summaryTexts[lang] || summaryTexts['hi-IN'];
+        setTimeout(() => {
+          if (autoSpeakRef.current) speak(summaryText, lang);
+        }, 400);
+      }, 1800)
 
-    setTimeout(() => {
-    const lang = selectedLangRef.current as UiLang;
-    const resp = botResponses[lang] || botResponses['hi-IN'];
-    addMsg({ type: 'prepPrompt', category, timestamp: getTime() })
-    setConversationStage('results_shown')
-    setIsTyping(false)
-    setTimeout(() => {
-      if (autoSpeakRef.current) speak(resp.prepPromptText, lang);
-    }, 400);
-  }, 3400)
+      if (results[0]) {
+        setTimeout(() => {
+          const curLang = selectedLangRef.current as UiLang;
+          const resp = botResponses[curLang] || botResponses['hi-IN']
+          addMsg({ type: 'bot', text: resp.recommendation(results[0].name), timestamp: getTime() })
+        }, 2600)
+      }
+
+      setTimeout(() => {
+        const lang = selectedLangRef.current as UiLang;
+        const resp = botResponses[lang] || botResponses['hi-IN'];
+        addMsg({ type: 'prepPrompt', category, timestamp: getTime() })
+        setConversationStage('results_shown')
+        setIsTyping(false)
+        setTimeout(() => {
+          if (autoSpeakRef.current) speak(resp.prepPromptText, lang);
+        }, 400);
+      }, 3400)
+    })
+    .catch(() => {
+      setIsTyping(false)
+      const lang = selectedLangRef.current as UiLang
+      const errorTexts: Record<UiLang, string> = {
+        'hi-IN': 'योजनाएं खोजने में समस्या हुई। कृपया दोबारा कोशिश करें।',
+        'mr-IN': 'योजना शोधताना अडचण आली. कृपया पुन्हा प्रयत्न करा.',
+        'en-IN': 'Something went wrong while searching for schemes. Please try again.',
+        'ta-IN': 'திட்டங்களைத் தேடுவதில் சிக்கல் ஏற்பட்டது. மீண்டும் முயற்சிக்கவும்.',
+        'te-IN': 'పథకాలను వెతకడంలో సమస్య వచ్చింది. దయచేసి మళ్లీ ప్రయత్నించండి.',
+        'kn-IN': 'ಯೋಜನೆಗಳನ್ನು ಹುಡುಕುವಲ್ಲಿ ಸಮಸ್ಯೆ ಆಯಿತು. ದಯವಿಟ್ಟು ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.',
+        'ml-IN': 'പദ്ധതികൾ തിരയുന്നതിൽ പ്രശ്നമുണ്ടായി. ദയവായി വീണ്ടും ശ്രമിക്കുക.',
+        'bn-IN': 'প্রকল্প খুঁজতে সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।',
+        'gu-IN': 'યોજનાઓ શોધવામાં સમસ્યા આવી. કૃપા કરી ફરી પ્રયાસ કરો.',
+        'pa-IN': 'ਯੋਜਨਾਵਾਂ ਖੋਜਣ ਵਿੱਚ ਸਮੱਸਿਆ ਆਈ। ਕਿਰਪਾ ਕਰਕੇ ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ।',
+      }
+      addMsg({ type: 'bot', text: errorTexts[lang] || errorTexts['hi-IN'], timestamp: getTime() })
+    })
 }, [addMsg]);
 
   const stopRecording = useCallback(() => {
@@ -1564,11 +2429,14 @@ export default function SimpleModePage() {
     setVoiceError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // TEMP DEBUG — remove after C1 verification.
+      console.log('[voice-debug] getUserMedia granted, tracks:', stream.getAudioTracks().map(t => ({ label: t.label, enabled: t.enabled, muted: t.muted, readyState: t.readyState })));
       mediaStreamRef.current = stream;
       audioChunksRef.current = [];
 
       const recorder = new MediaRecorder(stream);
       mediaRecorderRef.current = recorder;
+      console.log('[voice-debug] MediaRecorder created, mimeType:', recorder.mimeType, 'state:', recorder.state);
 
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) audioChunksRef.current.push(e.data);
@@ -1582,18 +2450,53 @@ export default function SimpleModePage() {
         const audioBlob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
         audioChunksRef.current = [];
 
-        if (audioBlob.size === 0) return;
+        // TEMP DEBUG — remove after C1 verification.
+        console.log('[voice-debug] recorded blob size (bytes):', audioBlob.size, 'mimeType:', recorder.mimeType, 'lang:', selectedLangRef.current);
 
+        if (audioBlob.size === 0) {
+          const currentUi = uiStrings[resolveUiLang(selectedLangRef.current)];
+          setVoiceError(currentUi.voiceEmptyError ?? 'Could not understand the audio. Please try again.');
+          return;
+        }
+
+        // Looked up fresh here (not the `ui` from render scope) because this
+        // whole recorder.onstop closure is created once inside startRecording
+        // and startRecording's own useCallback deps never change (see below)
+        // — so a closed-over `ui` would freeze at whatever language was
+        // selected on the very first render and never update again, which is
+        // exactly what was making every voice error toast show in Hindi
+        // regardless of the language actually selected.
         setIsTranscribing(true);
         try {
+          // TEMP DEBUG — remove after C1 verification.
+          console.log('[voice-debug] POSTing to /voice/transcribe — size:', audioBlob.size, 'lang param:', toVoiceLanguage(selectedLangRef.current));
           const result = await transcribeAudio(audioBlob, toVoiceLanguage(selectedLangRef.current));
-          if (result.text.trim()) {
+          console.log('[voice-debug] transcribe response:', JSON.stringify(result));
+          const currentUi = uiStrings[resolveUiLang(selectedLangRef.current)];
+          // Below ~0.35, the "small" CPU Whisper model has been observed to
+          // collapse into repeated-token garbage rather than a genuine
+          // low-confidence-but-plausible transcript (seen on Telugu/Kannada
+          // test audio: confidence 0.09-0.23 vs 0.6-0.83 for a correct
+          // transcription) — better to ask the user to retry than silently
+          // feed garbage into scheme matching.
+          if (result.text.trim() && result.confidence >= 0.35) {
             handleSend(result.text);
           } else {
-            setVoiceError(ui.voiceEmptyError ?? 'Could not understand the audio. Please try again.');
+            setVoiceError(currentUi.voiceEmptyError ?? 'Could not understand the audio. Please try again.');
           }
-        } catch {
-          setVoiceError(ui.voiceTranscribeError ?? 'Could not transcribe audio. Please try again.');
+        } catch (err) {
+          // TEMP DEBUG — remove after C1 verification.
+          console.log('[voice-debug] transcribe threw:', err instanceof ApiError ? `ApiError status=${err.status} detail=${JSON.stringify(err.detail)}` : String(err));
+          const currentUi = uiStrings[resolveUiLang(selectedLangRef.current)];
+          // A 401/403 here means the session token expired, not that the
+          // audio was unintelligible — showing "could not understand you"
+          // for an auth failure sends the user retrying something that will
+          // never succeed no matter how clearly they speak.
+          if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+            setVoiceError(currentUi.voiceSessionExpiredError ?? 'Your session expired. Please reload the page and try again.');
+          } else {
+            setVoiceError(currentUi.voiceTranscribeError ?? 'Could not transcribe audio. Please try again.');
+          }
         } finally {
           setIsTranscribing(false);
         }
@@ -1601,8 +2504,11 @@ export default function SimpleModePage() {
 
       recorder.start();
       setIsRecording(true);
-    } catch {
-      setVoiceError(ui.voiceMicError ?? 'Microphone access denied. Please allow microphone access and try again.');
+    } catch (err) {
+      // TEMP DEBUG — remove after C1 verification.
+      console.log('[voice-debug] getUserMedia/recorder setup threw:', String(err));
+      const currentUi = uiStrings[resolveUiLang(selectedLangRef.current)];
+      setVoiceError(currentUi.voiceMicError ?? 'Microphone access denied. Please allow microphone access and try again.');
     }
   }, [handleSend]);
 
@@ -1610,7 +2516,9 @@ export default function SimpleModePage() {
   const lang = resolveUiLang(selectedLang);
 
   const openWhatsAppWithSchemes = () => {
-    const lines = matchedSchemes.map((s: SchemeItem) => `• ${getSchemeName(s, lang)}: ${s.amount} (${getSchemeUnit(s, lang)})`).join('\n');
+    const lines = latestRealResults.length > 0
+      ? latestRealResults.map((s) => `• ${s.name} (${s.match_score}% match)`).join('\n')
+      : matchedSchemes.map((s: SchemeItem) => `• ${getSchemeName(s, lang)}: ${s.amount} (${getSchemeUnit(s, lang)})`).join('\n');
     const text = `${ui.whatsappHeader}\n${lines}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
@@ -1628,7 +2536,16 @@ export default function SimpleModePage() {
     setDocCheckCategory('');
     setShowPincodeInput(false);
     setPincodeText('');
-    hasSpokenGreetingRef.current = false;
+    // Speak the greeting in the language the user just picked, right here —
+    // this IS the user gesture (a <select> change), so it's not subject to
+    // autoplay-blocking the way a page-load-time speak() would be. Also mark
+    // the greeting as "spoken" so the window-level first-interaction unlock
+    // below doesn't fire a second, redundant greeting in a stale language.
+    hasSpokenGreetingRef.current = true;
+    const newUiLang = resolveUiLang(newLang);
+    const newGreeting = greetings[newUiLang];
+    speak(newGreeting.msg1, newUiLang);
+    setTimeout(() => speak(newGreeting.msg2, newUiLang), 2800);
     setTimeout(() => startGreeting(), 300);
   };
 
@@ -1713,14 +2630,15 @@ export default function SimpleModePage() {
       </aside>
 
       <main className="flex flex-col h-screen min-h-0 overflow-hidden">
-        <div className="h-14 shrink-0 bg-[#1A6B3C] px-5 flex items-center gap-3">
-          <button className="bg-transparent border-none p-0 cursor-pointer" onClick={() => router.push('/')}>
+        <div className="h-14 shrink-0 bg-[#1A6B3C] px-5 flex items-center gap-3 overflow-x-auto overflow-y-hidden">
+          <button className="bg-transparent border-none p-0 cursor-pointer shrink-0" onClick={() => router.push('/')}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
               <polyline points="15 18 9 12 15 6" />
             </svg>
           </button>
-          <button 
+          <button
             onClick={() => router.push('/')}
+            className="shrink-0"
             style={{
               background: 'transparent',
               border: 'none',
@@ -1744,33 +2662,33 @@ export default function SimpleModePage() {
             </span>
           </button>
 
-          <div className="w-[38px] h-[38px] rounded-full bg-[#E8690B] flex items-center justify-center">
+          <div className="w-[38px] h-[38px] rounded-full bg-[#E8690B] flex items-center justify-center shrink-0">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
               <circle cx="12" cy="8" r="4" />
               <path d="M6 20.5c0-2 3-3 6-3s6 1 6 3" />
             </svg>
           </div>
 
-          <div>
-            <div className="text-white text-[14px] font-bold flex items-center gap-1.5">
+          <div className="min-w-0 shrink">
+            <div className="text-white text-[14px] font-bold flex items-center gap-1.5 truncate">
               SuvidhaAI
-              <span className="w-[14px] h-[14px] rounded-full bg-[#1565C0] inline-flex items-center justify-center">
+              <span className="w-[14px] h-[14px] rounded-full bg-[#1565C0] inline-flex items-center justify-center shrink-0">
                 <svg width="8" height="8" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2">
                   <polyline points="2 6.5 4.8 9.2 10 3.5" />
                 </svg>
               </span>
             </div>
-            <div className="text-[10px] text-[rgba(255,255,255,0.65)]">{ui.sarkaricSahayakSub}</div>
+            <div className="text-[10px] text-[rgba(255,255,255,0.65)] truncate">{ui.sarkaricSahayakSub}</div>
           </div>
 
-          <div className="ml-auto bg-[rgba(0,0,0,0.2)] rounded-full p-[3px] flex items-center">
+          <div className="ml-auto bg-[rgba(0,0,0,0.2)] rounded-full p-[3px] flex items-center shrink-0">
             <span className="bg-white text-[#1A6B3C] text-[11px] font-bold px-3 py-1 rounded-full">{ui.simpleMode}</span>
             <button className="text-[11px] text-[rgba(255,255,255,0.6)] px-3 py-1" onClick={() => router.push('/full')}>
               {ui.detailedMode}
             </button>
           </div>
 
-          <button className="w-[30px] h-[30px] rounded-full bg-[rgba(255,255,255,0.1)] flex items-center justify-center">
+          <button className="w-[30px] h-[30px] rounded-full bg-[rgba(255,255,255,0.1)] flex items-center justify-center shrink-0">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
               <circle cx="11" cy="11" r="8" />
               <path d="m21 21-4.35-4.35" />
@@ -1779,16 +2697,23 @@ export default function SimpleModePage() {
           <select
             value={selectedLang}
             onChange={(e) => handleLanguageChange(e.target.value)}
-            className="bg-[rgba(255,255,255,0.12)] border border-[rgba(255,255,255,0.2)] rounded-[5px] py-1 px-2 text-[11px] font-bold text-white cursor-pointer outline-none"
+            className="bg-[rgba(255,255,255,0.12)] border border-[rgba(255,255,255,0.2)] rounded-[5px] py-1 px-2 text-[11px] font-bold text-white cursor-pointer outline-none shrink-0 min-w-[92px]"
             style={{ fontFamily: 'var(--font-mukta)' }}
           >
-            <option value="hi-IN">हिंदी</option>
-            <option value="mr-IN">मराठी</option>
-            <option value="en-IN">English</option>
+            <option className="text-[#1C1917]" value="hi-IN">हिंदी</option>
+            <option className="text-[#1C1917]" value="mr-IN">मराठी</option>
+            <option className="text-[#1C1917]" value="en-IN">English</option>
+            <option className="text-[#1C1917]" value="ta-IN">தமிழ்</option>
+            <option className="text-[#1C1917]" value="te-IN">తెలుగు</option>
+            <option className="text-[#1C1917]" value="kn-IN">ಕನ್ನಡ</option>
+            <option className="text-[#1C1917]" value="ml-IN">മലയാളം</option>
+            <option className="text-[#1C1917]" value="bn-IN">বাংলা</option>
+            <option className="text-[#1C1917]" value="gu-IN">ગુજરાતી</option>
+            <option className="text-[#1C1917]" value="pa-IN">ਪੰਜਾਬੀ</option>
           </select>
           <button
             type="button"
-            className="w-[30px] h-[30px] rounded-full border-none cursor-pointer flex items-center justify-center transition-all duration-200 bg-[rgba(255,255,255,0.1)]"
+            className="w-[30px] h-[30px] rounded-full border-none cursor-pointer flex items-center justify-center transition-all duration-200 bg-[rgba(255,255,255,0.1)] shrink-0"
             onClick={() => {
               setAutoSpeak((v) => !v);
               window.speechSynthesis.cancel();
@@ -1807,7 +2732,7 @@ export default function SimpleModePage() {
               </svg>
             )}
           </button>
-          <button className="w-[30px] h-[30px] rounded-full bg-[rgba(255,255,255,0.1)] flex items-center justify-center">
+          <button className="w-[30px] h-[30px] rounded-full bg-[rgba(255,255,255,0.1)] flex items-center justify-center shrink-0">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="white">
               <circle cx="5" cy="12" r="1.8" />
               <circle cx="12" cy="12" r="1.8" />
@@ -1848,6 +2773,64 @@ export default function SimpleModePage() {
                     </div>
                   </div>
                   <div className="pl-[34px] text-[9px] text-[#A8A29E] mt-1">{message.timestamp}</div>
+                </div>
+              );
+            }
+
+            if (message.type === 'schemes' && message.realResults) {
+              const results = message.realResults;
+              const profile = message.parsedProfile;
+              const detectedBits = [
+                profile?.gender ? (profile.gender === 'female' ? (ui.detectedFemale ?? 'woman') : (ui.detectedMale ?? 'man')) : null,
+                profile?.age != null ? `${profile.age} ${ui.yearsOld ?? 'yrs'}` : null,
+              ].filter(Boolean);
+              return (
+                <div key={message.id} className="self-start w-full">
+                  {detectedBits.length > 0 && (
+                    <div className="text-[10px] font-bold text-[#78716C] px-1 pb-1.5">
+                      {(ui.detectedLabel ?? 'Detected from what you said:')} {detectedBits.join(', ')}
+                    </div>
+                  )}
+                  {results.length === 0 ? (
+                    <div className="bg-white rounded-[4px_18px_18px_18px] py-3 px-4 shadow-[0_1px_2px_rgba(0,0,0,0.12)] max-w-[300px] text-[12px] text-[#78716C]">
+                      {ui.noRealMatches ?? 'No matching real schemes found for your details.'}
+                    </div>
+                  ) : (
+                  <div className="simple-scroll flex gap-[14px] overflow-x-auto px-1 pt-1 pb-3">
+                    {results.map((scheme) => {
+                      const tier = scheme.match_score >= 70 ? 'high' : scheme.match_score >= 40 ? 'medium' : 'low';
+                      const headerColor = tier === 'high' ? '#1A6B3C' : tier === 'medium' ? '#D97706' : '#78716C';
+                      return (
+                        <div key={scheme.scheme_id} className="flex flex-col items-start shrink-0">
+                          <div className="h-3 w-20 rounded-[6px_6px_0_0]" style={{ backgroundColor: headerColor }} />
+                          <div className="w-[240px] bg-white rounded-[0_12px_12px_12px] border-2 overflow-hidden shadow-[0_6px_20px_rgba(0,0,0,0.12)]" style={{ borderColor: headerColor }}>
+                            <div className="py-[10px] px-3 flex items-center gap-[9px] min-h-16" style={{ backgroundColor: headerColor }}>
+                              <div className="text-[13px] leading-[1.25] text-white font-bold flex-1">{scheme.name}</div>
+                              <span className="text-[10px] font-bold py-[2px] px-[7px] rounded-full bg-white whitespace-nowrap" style={{ color: headerColor }}>{scheme.match_score}%</span>
+                            </div>
+                            <div className="p-3">
+                              <div className="text-[9px] uppercase font-bold text-[#A8A29E] mb-1.5">{ui.matchStatusLabel}</div>
+                              {scheme.reasons.map((r) => (
+                                <div key={r.factor} className="flex justify-between gap-2 text-[11px] text-[#57534E] py-[2px]">
+                                  <span className="truncate">{MATCH_FACTOR_LABELS[lang][r.factor] ?? r.factor.replace(/_/g, ' ')}: {translateMatchedValue(r.factor, r.matched, lang)}</span>
+                                  <span className="font-bold shrink-0" style={{ color: headerColor }}>+{r.weight}</span>
+                                </div>
+                              ))}
+                              {scheme.warnings.map((w) => (
+                                <div key={w} className="mt-2 bg-[#FFFBEB] border border-[#FDE68A] rounded-[6px] py-[7px] px-[9px] flex gap-[5px] items-start">
+                                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2" className="shrink-0 mt-0.5">
+                                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3.05h16.94a2 2 0 0 0 1.71-3.05L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                                  </svg>
+                                  <div className="text-[10px] text-[#92400E] leading-[1.4]">{translateWarningText(w, lang)}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  )}
                 </div>
               );
             }
@@ -2174,19 +3157,16 @@ export default function SimpleModePage() {
             <Waveform isRecording={isRecording} />
 
             <button
-              className={`w-12 h-12 rounded-full border-none cursor-pointer flex items-center justify-center animate-[micPulse_2.5s_ease-in-out_infinite] ${
+              disabled={isTranscribing}
+              className={`w-12 h-12 rounded-full border-none flex items-center justify-center animate-[micPulse_2.5s_ease-in-out_infinite] disabled:opacity-60 disabled:cursor-wait ${
                 isRecording ? 'bg-[#DC2626]' : 'bg-[#E8690B]'
-              }`}
+              } ${isTranscribing ? '' : 'cursor-pointer'}`}
               onClick={() => {
                 if (isRecording) {
-                  setIsRecording(false);
+                  stopRecording();
                   return;
                 }
-                setIsRecording(true);
-                setTimeout(() => {
-                  setIsRecording(false);
-                  handleSend(ui.voiceQuery);
-                }, 3000);
+                startRecording();
               }}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
@@ -2199,7 +3179,12 @@ export default function SimpleModePage() {
             <Waveform isRecording={isRecording} />
           </div>
 
-          <div className="text-center text-[11px] font-bold text-[#57534E] -mt-1">{isRecording ? ui.recording : ui.speakBtn}</div>
+          <div className="text-center text-[11px] font-bold text-[#57534E] -mt-1">
+            {isRecording ? ui.recording : isTranscribing ? (ui.transcribing ?? 'Transcribing…') : ui.speakBtn}
+          </div>
+          {voiceError && (
+            <div className="text-center text-[10px] font-bold text-[#DC2626] px-4 -mt-0.5">{voiceError}</div>
+          )}
 
           <div className="grid grid-cols-3 gap-2 px-4 pt-2 pb-3">
             <button

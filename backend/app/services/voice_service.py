@@ -92,7 +92,13 @@ class VoiceService:
                 tmp.write(audio_bytes)
                 tmp_path = tmp.name
 
-            segments, info = self._model.transcribe(tmp_path, language=language)
+            # vad_filter=False (faster-whisper's own default) is explicit here
+            # on purpose: VAD silence-trimming was investigated as a possible
+            # cause of clipped/incomplete transcriptions and ruled out — it
+            # was never enabled — but the flag is pinned so nobody re-enables
+            # it later assuming it's a safe default without re-checking
+            # against short, pause-heavy citizen speech first.
+            segments, info = self._model.transcribe(tmp_path, language=language, vad_filter=False)
             segments = list(segments)  # faster-whisper returns a lazy generator
 
             text = " ".join(segment.text.strip() for segment in segments).strip()

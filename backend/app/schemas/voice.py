@@ -7,7 +7,7 @@ Application lifecycle & Voice.
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 SUPPORTED_LANGUAGES = ("en", "hi", "mr", "ta", "te", "kn", "ml", "bn", "gu", "pa")
 VoiceLanguage = Literal["en", "hi", "mr", "ta", "te", "kn", "ml", "bn", "gu", "pa"]
@@ -23,3 +23,11 @@ class TranscribeOut(BaseModel):
     language: str
     duration: float
     confidence: float
+
+
+class SpeakIn(BaseModel):
+    """Request for POST /voice/speak. `text` is capped well above any single
+    bot message this app sends — generous, not a real limit in practice."""
+
+    text: str = Field(min_length=1, max_length=2000)
+    lang: VoiceLanguage

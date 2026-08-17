@@ -21,15 +21,18 @@ makes that gap loud and explicit instead of faking a working response.
 Owned by: Member 2 — Scheme Discovery Engine.
 """
 
+import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.scheme import Scheme
+from app.services.embedding_service import embedding_service
 from app.schemas.scheme import (
     MatchReason as MatchReasonOut,
     PaginatedSchemes,
+    ParsedVoiceProfile,
     SchemeComparison,
     SchemeCompareIn,
     SchemeDetail,
@@ -37,9 +40,12 @@ from app.schemas.scheme import (
     SchemeMatchIn,
     SchemeOut,
     SchemeSearchIn,
+    VoiceSchemeSearchIn,
+    VoiceSchemeSearchOut,
 )
-from app.services.matching_service import UserProfile, get_matches
+from app.services.matching_service import UserProfile, filter_and_score, get_matches
 from app.services.search_service import hybrid_search
+from app.services.voice_profile_service import parse_profile
 
 router = APIRouter(prefix="/schemes", tags=["schemes"])
 
@@ -155,6 +161,35 @@ def search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
     """Public — no auth, no personalization. Pure query relevance."""
     results = hybrid_search(db, query=body.query, language=body.language, limit=body.limit)
     return [_to_scheme_match(r, body.language) for r in results]
+
+
+@router.post("/voice-search", response_model=VoiceSchemeSearchOut)
+def voice_search_schemes(body: VoiceSchemeSearchIn, db: Session = Depends(get_db)):
+    """Public — no auth. Takes the FULL transcribed sentence from
+    POST /voice/transcribe, parses gender/age out of it, ranks every real
+    published scheme by relevance to the sentence (same scoring path as
+    POST /schemes/search), then hard-filters + re-scores using each
+    scheme's actual eligibility_rules (gender/min_age/max_age) against the
+    parsed profile — so two different speakers stating different
+    gender/age genuinely get different result sets, not the same fixed
+    list. Exists because /schemes/match needs auth that isn't wired up
+    yet (see get_current_user_profile above)."""
+    parsed = parse_profile(body.text, body.language)
+    profile = UserProfile(gender=parsed["gender"], age=parsed["age"])
+
+    stmt = select(Scheme).where(Scheme.is_published.is_(True))
+    all_schemes = list(db.scalars(stmt).all())
+
+    query_embedding = None
+    if embedding_service.is_ready:
+        query_embedding = np.array(embedding_service.encode(body.text))
+
+    matches = filter_and_score(all_schemes, profile, query_embedding, limit=body.limit)
+
+    return VoiceSchemeSearchOut(
+        parsed_profile=ParsedVoiceProfile(gender=parsed["gender"], age=parsed["age"]),
+        results=[_to_scheme_match(r, body.language) for r in matches],
+    )
 
 
 @router.post("/match", response_model=list[SchemeMatch])

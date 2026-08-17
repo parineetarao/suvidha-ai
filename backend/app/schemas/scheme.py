@@ -143,6 +143,33 @@ class SchemeMatchIn(BaseModel):
     language: LanguageCode = "en"
 
 
+class ParsedVoiceProfile(BaseModel):
+    """What voice_profile_service.parse_profile() extracted from the
+    transcribed sentence. Exposed in the response so the UI (and this
+    proof-of-fix) can show exactly what was detected, not just the results."""
+
+    gender: str | None = None
+    age: int | None = None
+
+
+class VoiceSchemeSearchIn(BaseModel):
+    """Input for POST /schemes/voice-search — the public, unauthenticated
+    voice -> real-scheme pipeline. Takes the full transcribed sentence
+    (not just a query), parses gender/age out of it, and eligibility-filters
+    real published schemes against them. Exists because POST /schemes/match
+    needs Member 1's auth dependency (currently a 501 stub) and this flow
+    has no login yet."""
+
+    text: str = Field(min_length=1, max_length=1000)
+    language: LanguageCode = "en"
+    limit: int = Field(default=10, ge=1, le=50)
+
+
+class VoiceSchemeSearchOut(BaseModel):
+    parsed_profile: ParsedVoiceProfile
+    results: list[SchemeMatch]
+
+
 class SchemeCompareIn(BaseModel):
     scheme_ids: list[str] = Field(min_length=2, max_length=3)
     language: LanguageCode = "en"
