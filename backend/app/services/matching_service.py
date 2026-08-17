@@ -52,6 +52,7 @@ class UserProfile:
     annual_income_inr: int | None = None
     category: str | None = None  # General/OBC/SC/ST
     gender: str | None = None
+    age: int | None = None
     disability_status: bool | None = None
     family_size: int | None = None
 
@@ -91,9 +92,17 @@ def _passes_hard_eligibility(scheme: Scheme, profile: UserProfile) -> bool:
     if occupations and profile.occupation and profile.occupation not in occupations:
         return False
 
-    # Age isn't in UserProfile yet (Member 1's table needs to expose it) —
-    # deliberately not enforced here until that field exists, rather than
-    # silently comparing against None and always passing/failing wrong.
+    gender = rules.get("gender")
+    if gender and profile.gender and gender != profile.gender:
+        return False
+
+    min_age = rules.get("min_age")
+    if min_age is not None and profile.age is not None and profile.age < min_age:
+        return False
+
+    max_age = rules.get("max_age")
+    if max_age is not None and profile.age is not None and profile.age > max_age:
+        return False
 
     return True
 
@@ -118,6 +127,17 @@ def _score_scheme(scheme: Scheme, profile: UserProfile, query_embedding: np.ndar
         score += 15
         reasons.append(MatchReason("state", profile.state_code or "central scheme", 15))
 
+    gender_rule = rules.get("gender")
+    if gender_rule and profile.gender and gender_rule == profile.gender:
+        score += 10
+        reasons.append(MatchReason("gender", gender_rule, 10))
+
+    min_age, max_age = rules.get("min_age"), rules.get("max_age")
+    if (min_age is not None or max_age is not None) and profile.age is not None:
+        score += 10
+        age_label = f"{min_age or 0}-{max_age if max_age is not None else 'no cap'} yrs"
+        reasons.append(MatchReason("age", age_label, 10))
+
     semantic_points = 0
     if query_embedding is not None and scheme.embedding is not None:
         semantic = float(np.dot(query_embedding, np.array(scheme.embedding)))
@@ -135,6 +155,27 @@ def _score_scheme(scheme: Scheme, profile: UserProfile, query_embedding: np.ndar
     return MatchResult(scheme=scheme, match_score=min(score, 100), reasons=reasons, warnings=warnings)
 
 
+def filter_and_score(
+    schemes: list[Scheme],
+    profile: UserProfile,
+    query_embedding: np.ndarray | None,
+    limit: int = 10,
+) -> list[MatchResult]:
+    """Shared core: hard-filters `schemes` against `profile`, scores what's
+    left, returns the top `limit` sorted by score. Reused by get_matches
+    (DB-fetching, for the authenticated /schemes/match) and by
+    /schemes/voice-search (which already has a ranked scheme list from
+    search_service.hybrid_search and just needs the eligibility layer)."""
+    eligible = [s for s in schemes if _passes_hard_eligibility(s, profile)]
+    if not eligible:
+        logger.info("No schemes passed hard eligibility for this profile.")
+        return []
+
+    results = [_score_scheme(scheme, profile, query_embedding) for scheme in eligible]
+    results.sort(key=lambda r: r.match_score, reverse=True)
+    return results[:limit]
+
+
 def get_matches(
     db: Session,
     profile: UserProfile,
@@ -147,11 +188,6 @@ def get_matches(
     stmt = select(Scheme).where(Scheme.is_published.is_(True))
     all_schemes = list(db.scalars(stmt).all())
 
-    eligible = [s for s in all_schemes if _passes_hard_eligibility(s, profile)]
-    if not eligible:
-        logger.info("No schemes passed hard eligibility for this profile.")
-        return []
-
     query_embedding = None
     if query and embedding_service.is_ready:
         query_embedding = np.array(embedding_service.encode(query))
@@ -163,6 +199,4 @@ def get_matches(
         if fallback_text:
             query_embedding = np.array(embedding_service.encode(fallback_text))
 
-    results = [_score_scheme(scheme, profile, query_embedding) for scheme in eligible]
-    results.sort(key=lambda r: r.match_score, reverse=True)
-    return results[:limit]
+    return filter_and_score(all_schemes, profile, query_embedding, limit)
