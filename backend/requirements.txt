@@ -47,3 +47,4 @@ requests==2.32.3
 # Voice output (Member 3) — server-side TTS so audio works for every
 # language regardless of what voices are installed on the listener's OS
 gTTS==2.5.4
+gtts

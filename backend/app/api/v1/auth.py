@@ -51,9 +51,10 @@ def _set_refresh_cookie(response: Response, raw_refresh_token: str) -> None:
 
 @router.post("/request-otp", response_model=OTPRequestOut)
 async def request_otp(payload: OTPRequestIn, db: Annotated[Session, Depends(get_db)]):
-    request_id, expires_in = await auth_service.request_otp(db, payload.mobile_number, payload.email)
+    request_id, expires_in = await auth_service.request_otp(
+        db, payload.mobile_number, payload.email, payload.mode
+    )
     return OTPRequestOut(request_id=request_id, expires_in=expires_in)
-
 
 @router.post("/verify-otp", response_model=TokenPair)
 async def verify_otp(payload: OTPVerifyIn, response: Response, db: Annotated[Session, Depends(get_db)]):
