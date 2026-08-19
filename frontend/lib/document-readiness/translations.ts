@@ -1,7 +1,7 @@
 import type { Lang } from '@/lib/strings'
 
-type Dict = Record<Lang, string>
-type DictFn = Record<Lang, (n: string | number) => string>
+type Dict = Partial<Record<Lang, string>>
+type DictFn = Partial<Record<Lang, (n: string | number) => string>>
 
 function pick(d: Dict, lang: Lang): string {
   return d[lang] ?? d['en-IN'] ?? ''

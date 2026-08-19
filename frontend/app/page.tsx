@@ -73,6 +73,13 @@ export default function SuvidhaAILanding() {
     { code: 'en-IN', label: 'English' },
     { code: 'hi-IN', label: 'हिंदी' },
     { code: 'mr-IN', label: 'मराठी' },
+    { code: 'ta-IN', label: 'தமிழ்' },
+    { code: 'te-IN', label: 'తెలుగు' },
+    { code: 'kn-IN', label: 'ಕನ್ನಡ' },
+    { code: 'ml-IN', label: 'മലയാളം' },
+    { code: 'bn-IN', label: 'বাংলা' },
+    { code: 'gu-IN', label: 'ગુજરાતી' },
+    { code: 'pa-IN', label: 'ਪੰਜਾਬੀ' },
   ];
 
   return (
