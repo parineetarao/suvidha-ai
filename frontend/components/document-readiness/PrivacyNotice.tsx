@@ -1,11 +1,11 @@
 'use client'
 
 import { ShieldCheck, Info } from 'lucide-react'
-import type { Lang } from '@/lib/strings'
+import type { DocLang } from '@/lib/document-readiness/types'
 import { DR, drt } from '@/lib/document-readiness/translations'
 
 interface PrivacyNoticeProps {
-  lang: Lang
+  lang: DocLang
   variant?: 'privacy' | 'safety'
   className?: string
 }

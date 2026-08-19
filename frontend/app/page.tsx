@@ -70,6 +70,7 @@ export default function SuvidhaAILanding() {
   const router = useRouter();
   const [lang, setLang] = useState<Lang>('en-IN');
   const [searchInput, setSearchInput] = useState('');
+  const [showHelpModal, setShowHelpModal] = useState(false);
 
   const { isAuthenticated, isLoading } = useAuth();
 
@@ -87,6 +88,13 @@ export default function SuvidhaAILanding() {
     { code: 'en-IN', label: 'English' },
     { code: 'hi-IN', label: 'हिंदी' },
     { code: 'mr-IN', label: 'मराठी' },
+    { code: 'ta-IN', label: 'தமிழ்' },
+    { code: 'te-IN', label: 'తెలుగు' },
+    { code: 'kn-IN', label: 'ಕನ್ನಡ' },
+    { code: 'ml-IN', label: 'മലയാളം' },
+    { code: 'bn-IN', label: 'বাংলা' },
+    { code: 'gu-IN', label: 'ગુજરાતી' },
+    { code: 'pa-IN', label: 'ਪੰਜਾਬੀ' },
   ];
 
   return (
@@ -101,15 +109,31 @@ export default function SuvidhaAILanding() {
 
         {/* Center: Nav Links */}
         <div className="hidden md:flex items-center gap-5 lg:gap-8">
-          {[g(S.landing.navSchemes, lang), g(S.landing.navHow, lang), g(S.landing.navAbout, lang), g(S.landing.navHelp, lang)].map((link) => (
-            <a
-              key={link}
-              href="#"
-              className="text-[12px] font-semibold text-[#57534E] hover:text-[#E8690B] hover:border-b-2 hover:border-[#E8690B] pb-1 transition-all whitespace-nowrap"
-            >
-              {link}
-            </a>
-          ))}
+          {[
+            { id: 'schemes', label: g(S.landing.navSchemes, lang) },
+            { id: 'how', label: g(S.landing.navHow, lang) },
+            { id: 'about', label: g(S.landing.navAbout, lang) },
+            { id: 'help', label: g(S.landing.navHelp, lang) },
+          ].map((item) =>
+            item.id === 'help' ? (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setShowHelpModal(true)}
+                className="text-[12px] font-semibold text-[#57534E] hover:text-[#E8690B] hover:border-b-2 hover:border-[#E8690B] pb-1 transition-all whitespace-nowrap bg-transparent border-none cursor-pointer"
+              >
+                {item.label}
+              </button>
+            ) : (
+              <a
+                key={item.id}
+                href="#"
+                className="text-[12px] font-semibold text-[#57534E] hover:text-[#E8690B] hover:border-b-2 hover:border-[#E8690B] pb-1 transition-all whitespace-nowrap"
+              >
+                {item.label}
+              </a>
+            )
+          )}
         </div>
 
         {/* Right: Language & Login */}
@@ -430,7 +454,7 @@ export default function SuvidhaAILanding() {
         <div className="max-w-7xl mx-auto flex justify-center items-center gap-9 flex-wrap">
           {[
             { number: '500+', label: g(S.landing.statSchemes, lang) },
-            { number: '12', label: g(S.landing.statLanguages, lang) },
+            { number: '10', label: g(S.landing.statLanguages, lang) },
             { number: g(S.landing.statTimeNum, lang), label: g(S.landing.statTime, lang) },
             { number: g(S.landing.statFreeNum, lang), label: g(S.landing.statFree, lang) },
           ].map((stat, idx) => (
@@ -942,6 +966,46 @@ export default function SuvidhaAILanding() {
           </div>
         </div>
       </footer>
+
+      {/* HELP MODAL */}
+      {showHelpModal && (
+        <div
+          className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-5"
+          onClick={() => setShowHelpModal(false)}
+        >
+          <div
+            className="bg-white rounded-[14px] max-w-[480px] w-full p-6 relative shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setShowHelpModal(false)}
+              aria-label={g(S.landing.helpModalClose, lang)}
+              className="absolute top-4 right-4 text-[#A8A29E] hover:text-[#1C1917] text-xl leading-none bg-transparent border-none cursor-pointer"
+            >
+              ×
+            </button>
+            <h3 className="text-[19px] font-bold text-[#1C1917] mb-3" style={{ fontFamily: 'var(--font-libre-baskerville)' }}>
+              {g(S.landing.helpModalTitle, lang)}
+            </h3>
+            <p className="text-[13px] text-[#57534E] leading-[1.7] mb-5">
+              {g(S.landing.helpModalBody, lang)}
+            </p>
+            <div className="flex items-center justify-between border-t border-[#F0EBE4] pt-4">
+              <div className="text-[13px] text-[#1C1917]">
+                <span className="font-semibold">{g(S.landing.helpModalHelplineLabel, lang)}:</span> 155261
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowHelpModal(false)}
+                className="bg-[#1A6B3C] text-white text-[12px] font-bold rounded-[6px] px-4 py-2 hover:bg-[#155032] transition-colors"
+              >
+                {g(S.landing.helpModalClose, lang)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

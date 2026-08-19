@@ -1,12 +1,12 @@
 'use client'
 
 import { RefreshCw, Trash2, ScanLine } from 'lucide-react'
-import type { Lang } from '@/lib/strings'
+import type { DocLang } from '@/lib/document-readiness/types'
 import { DR, drt } from '@/lib/document-readiness/translations'
 import { DocumentCameraModal } from './DocumentCameraModal'
 
 interface DocumentUploadCardProps {
-  lang: Lang
+  lang: DocLang
   previewUrl: string | null
   isProcessing: boolean
   hasResult: boolean

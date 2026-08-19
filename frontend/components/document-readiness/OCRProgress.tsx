@@ -1,11 +1,10 @@
 'use client'
 
-import type { Lang } from '@/lib/strings'
-import type { OCRStageUpdate } from '@/lib/document-readiness/types'
+import type { DocLang, OCRStageUpdate } from '@/lib/document-readiness/types'
 import { DR, drt } from '@/lib/document-readiness/translations'
 
 interface OCRProgressProps {
-  lang: Lang
+  lang: DocLang
   stageKey: OCRStageUpdate['stageKey']
   progress: number
 }

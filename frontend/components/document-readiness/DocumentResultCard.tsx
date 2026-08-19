@@ -2,13 +2,12 @@
 
 import { useState } from 'react'
 import { CheckCircle2, AlertTriangle, XCircle, HelpCircle, Volume2, Pencil } from 'lucide-react'
-import type { Lang } from '@/lib/strings'
-import type { DocumentReadinessResult, ReadinessStatus } from '@/lib/document-readiness/types'
+import type { DocLang, DocumentReadinessResult, ReadinessStatus } from '@/lib/document-readiness/types'
 import { DR, drt, drtf } from '@/lib/document-readiness/translations'
 import { speakText } from '@/lib/document-readiness/speech'
 
 interface DocumentResultCardProps {
-  lang: Lang
+  lang: DocLang
   result: DocumentReadinessResult
   compact?: boolean
   onNameCorrected: (name: string) => void

@@ -18,6 +18,22 @@ import { ApplicationPreparationForm } from '@/components/full-mode/ApplicationPr
 import { FileCheck2, Trash2 } from 'lucide-react'
 import { apiPatch, apiPut, ApiError } from "@/lib/api-client"
 import { toUserPatchPayload, toProfilePutPayload } from "@/lib/profile-mapping"
+import {
+  searchSchemes as apiSearchSchemes,
+  getScheme as apiGetScheme,
+  compareSchemes as apiCompareSchemes,
+  ApiError,
+  type ApiLanguage,
+  type SchemeMatch as ApiSchemeMatch,
+  type SchemeDetail as ApiSchemeDetail,
+  type MatchReason as ApiMatchReason,
+} from '@/lib/api'
+
+function toApiLanguage(lang: Lang): ApiLanguage {
+  if (lang === 'hi-IN') return 'hi'
+  if (lang === 'mr-IN') return 'mr'
+  return 'en'
+}
 
 type ActivePanel = 'schemes' | 'compare' | 'prep' | 'tracker' | 'csc' | 'helpline'
 type EligibilityStatus = 'eligible' | 'partial' | 'ineligible'
@@ -25,6 +41,7 @@ type AppStatus = 'approved' | 'docs_needed' | 'pending' | 'rejected'
 
 type SchemeItem = {
   id: number
+  schemeId: string
   nameHindi: string
   nameEnglish: string
   nameMr: string
@@ -32,6 +49,7 @@ type SchemeItem = {
   logoColor: string
   headerColor: string
   ministry: string
+  category: string | null
   amount: string
   unit: string
   unitHindi: string
@@ -54,6 +72,7 @@ type SchemeItem = {
   documentsMr: string[]
   officialUrl: string
   requiredDocuments: RequiredDocumentRef[]
+  reasons: ApiMatchReason[]
 }
 
 function getSchemeName(scheme: SchemeItem, lang: Lang): string {
@@ -136,409 +155,117 @@ export type ProfileData = {
   ifscCode: string
 }
 
-const allSchemes: SchemeItem[] = [
-  {
-    id: 1,
-    nameHindi: 'पीएम किसान सम्मान निधि',
-    nameEnglish: 'PM Kisan Samman Nidhi',
-    nameMr: 'पीएम किसान सन्मान निधी',
-    logoText: 'पी',
-    logoColor: '#1A6B3C',
-    headerColor: '#1A6B3C',
-    ministry: 'Ministry of Agriculture',
-    amount: '₹6,000',
-    unit: 'सालाना',
-    unitHindi: 'सालाना',
-    unitMr: 'वार्षिक',
-    eligibility: 'eligible',
-    matchScore: 94,
-    matchLabel: 'High Match',
-    warning: 'Aadhaar must be linked to bank account before applying',
-    warningHindi: 'आवेदन से पहले आधार को बैंक खाते से लिंक करना ज़रूरी है',
-    warningMr: 'अर्ज करण्यापूर्वी आधार बँक खात्याशी जोडणे आवश्यक आहे',
-    applicationModes: ['Online', 'CSC'],
-    rejectionRisks: [
-      { risk: 'Name mismatch between Aadhaar and land records', fix: 'Visit Aadhaar centre to update name to exactly match land records' },
-      { risk: 'Aadhaar not linked to bank account', fix: 'Visit any bank branch with Aadhaar card to link it' }
-    ],
-    rejectionRisksHindi: [
-      { risk: 'आधार और ज़मीन के कागज़ों में नाम अलग-अलग है', fix: 'नाम को ज़मीन के कागज़ों से बिल्कुल मिलाने के लिए आधार केंद्र जाएं' },
-      { risk: 'आधार बैंक खाते से लिंक नहीं है', fix: 'लिंक करने के लिए आधार कार्ड लेकर किसी भी बैंक शाखा में जाएं' }
-    ],
-    rejectionRisksMr: [
-      { risk: 'आधार आणि जमिनीच्या कागदपत्रांमधील नाव वेगळे आहे', fix: 'नाव जमिनीच्या कागदपत्रांशी तंतोतंत जुळवण्यासाठी आधार केंद्रात जा' },
-      { risk: 'आधार बँक खात्याशी जोडलेले नाही', fix: 'जोडण्यासाठी आधार कार्डसह कोणत्याही बँक शाखेत जा' }
-    ],
-    steps: [
-      { text: 'Visit pmkisan.gov.in or nearest CSC centre', mode: 'online' },
-      { text: 'Click New Farmer Registration', mode: 'online' },
-      { text: 'Enter Aadhaar number — details auto-fill', mode: 'online' },
-      { text: 'Fill land documents and bank account number', mode: 'offline' },
-      { text: 'Submit and note the Reference Number', mode: 'online' }
-    ],
-    stepsHindi: ['pmkisan.gov.in पर जाएं या नज़दीकी CSC केंद्र जाएं', 'New Farmer Registration पर क्लिक करें', 'आधार नंबर डालें — जानकारी अपने आप भर जाएगी', 'ज़मीन के कागज़ और बैंक खाता नंबर भरें', 'Submit करें और Reference Number नोट करें'],
-    stepsMr: ['pmkisan.gov.in वर जा किंवा जवळच्या CSC केंद्रात जा', 'New Farmer Registration वर क्लिक करा', 'आधार क्रमांक टाका — माहिती आपोआप भरली जाईल', 'जमिनीचे कागद आणि बँक खाते क्रमांक भरा', 'Submit करा आणि Reference Number नोंदवा'],
-    documents: ['Aadhaar Card', 'Bank Passbook', 'Land Records (Khasra/Khatauni)', 'Mobile Number (Aadhaar linked)', 'Passport Photo (2 copies)'],
-    documentsHindi: ['आधार कार्ड', 'बैंक पासबुक', 'ज़मीन के कागज़ (खसरा/खतौनी)', 'मोबाइल नंबर (आधार से लिंक)', 'पासपोर्ट फोटो (2 प्रतियां)'],
-    documentsMr: ['आधार कार्ड', 'बँक पासबुक', 'जमिनीचे कागद (खसरा/खतावणी)', 'मोबाइल क्रमांक (आधार लिंक)', 'पासपोर्ट फोटो (2 प्रती)'],
-    officialUrl: 'https://pmkisan.gov.in',
-    requiredDocuments: [
-      { type: 'aadhaar', required: true, labelKey: 'aadhaar', reasonKey: 'identityProof' },
-      { type: 'bank_passbook', required: true, labelKey: 'bank_passbook', reasonKey: 'directBenefitTransfer' },
-      { type: 'land_record', required: true, labelKey: 'land_record', reasonKey: 'landOwnershipProof' },
-    ],
-  },
-  {
-    id: 2,
-    nameHindi: 'प्रधानमंत्री फसल बीमा',
-    nameEnglish: 'PM Fasal Bima Yojana',
-    nameMr: 'पंतप्रधान पीक विमा योजना',
-    logoText: 'फ',
-    logoColor: '#E8690B',
-    headerColor: '#E8690B',
-    ministry: 'Ministry of Agriculture',
-    amount: 'Full Coverage',
-    unit: 'फसल नुकसान',
-    unitHindi: 'फसल नुकसान',
-    unitMr: 'पीक नुकसान',
-    eligibility: 'eligible',
-    matchScore: 88,
-    matchLabel: 'High Match',
-    warning: 'Must apply within 2 weeks of sowing',
-    warningHindi: 'बुआई के 2 हफ्ते के अंदर आवेदन करना ज़रूरी है',
-    warningMr: 'पेरणीच्या 2 आठवड्यांच्या आत अर्ज करणे आवश्यक आहे',
-    applicationModes: ['CSC', 'Bank'],
-    rejectionRisks: [
-      { risk: 'Application submitted after sowing deadline', fix: 'Apply within 2 weeks of crop sowing' },
-      { risk: 'Incorrect crop or area details', fix: 'Cross-verify with Khasra document before filling' }
-    ],
-    rejectionRisksHindi: [
-      { risk: 'आवेदन बुआई की समय-सीमा के बाद जमा किया गया', fix: 'फसल बुआई के 2 हफ्ते के अंदर आवेदन करें' },
-      { risk: 'फसल या क्षेत्रफल की जानकारी गलत है', fix: 'फॉर्म भरने से पहले खसरा दस्तावेज़ से मिलान करें' }
-    ],
-    rejectionRisksMr: [
-      { risk: 'पेरणीच्या मुदतीनंतर अर्ज सादर केला', fix: 'पीक पेरणीच्या 2 आठवड्यांच्या आत अर्ज करा' },
-      { risk: 'पीक किंवा क्षेत्रफळाची माहिती चुकीची आहे', fix: 'फॉर्म भरण्यापूर्वी खसरा दस्तऐवजाशी पडताळणी करा' }
-    ],
-    steps: [
-      { text: 'Visit nearest bank or CSC centre', mode: 'csc' },
-      { text: 'Fill PMFBY Application Form', mode: 'offline' },
-      { text: 'Provide Khasra number and sowing details', mode: 'offline' },
-      { text: 'Pay premium amount', mode: 'offline' },
-      { text: 'Collect Insurance Certificate', mode: 'csc' }
-    ],
-    stepsHindi: ['नज़दीकी बैंक या CSC केंद्र जाएं', 'PMFBY Application Form भरें', 'खसरा नंबर और बुआई की जानकारी दें', 'प्रीमियम राशि जमा करें', 'बीमा प्रमाण पत्र लें'],
-    stepsMr: ['जवळच्या बँकेत किंवा CSC केंद्रात जा', 'PMFBY अर्ज फॉर्म भरा', 'खसरा क्रमांक आणि पेरणीची माहिती द्या', 'प्रीमियम रक्कम भरा', 'विमा प्रमाणपत्र घ्या'],
-    documents: ['Aadhaar Card', 'Bank Passbook', 'Land Records', 'Crop Sowing Certificate'],
-    documentsHindi: ['आधार कार्ड', 'बैंक पासबुक', 'ज़मीन के कागज़', 'फसल बुआई प्रमाण पत्र'],
-    documentsMr: ['आधार कार्ड', 'बँक पासबुक', 'जमिनीचे कागद', 'पीक पेरणी प्रमाणपत्र'],
-    officialUrl: 'https://pmfby.gov.in',
-    requiredDocuments: [
-      { type: 'aadhaar', required: true, labelKey: 'aadhaar', reasonKey: 'identityProof' },
-      { type: 'bank_passbook', required: true, labelKey: 'bank_passbook', reasonKey: 'directBenefitTransfer' },
-      { type: 'land_record', required: true, labelKey: 'land_record', reasonKey: 'landOwnershipProof' },
-    ],
-  },
-  {
-    id: 3,
-    nameHindi: 'पीएम आवास योजना ग्रामीण',
-    nameEnglish: 'PM Awas Yojana (Rural)',
-    nameMr: 'पीएम आवास योजना ग्रामीण',
-    logoText: 'आ',
-    logoColor: '#1565C0',
-    headerColor: '#1565C0',
-    ministry: 'Ministry of Rural Development',
-    amount: '₹1.3 Lakh',
-    unit: 'एकमुश्त',
-    unitHindi: 'एकमुश्त',
-    unitMr: 'एकरकमी',
-    eligibility: 'partial',
-    matchScore: 72,
-    matchLabel: 'Partial Match',
-    warning: 'Must be in SECC 2011 beneficiary list',
-    warningHindi: 'SECC 2011 लाभार्थी सूची में नाम होना ज़रूरी है',
-    warningMr: 'SECC 2011 लाभार्थी यादीत नाव असणे आवश्यक आहे',
-    applicationModes: ['Gram Panchayat'],
-    rejectionRisks: [
-      { risk: 'Name not in SECC 2011 list', fix: 'Check at Gram Panchayat and apply for inclusion' },
-      { risk: 'Already owns a pucca house', fix: 'Scheme only for those without any pucca house in India' }
-    ],
-    rejectionRisksHindi: [
-      { risk: 'नाम SECC 2011 सूची में नहीं है', fix: 'ग्राम पंचायत में जाँच करें और शामिल होने के लिए आवेदन करें' },
-      { risk: 'पहले से पक्का घर मौजूद है', fix: 'यह योजना केवल उनके लिए है जिनके पास भारत में कहीं भी पक्का घर नहीं है' }
-    ],
-    rejectionRisksMr: [
-      { risk: 'नाव SECC 2011 यादीत नाही', fix: 'ग्रामपंचायतीत तपासा आणि समाविष्ट होण्यासाठी अर्ज करा' },
-      { risk: 'आधीच पक्के घर आहे', fix: 'ही योजना फक्त भारतात कुठेही पक्के घर नसलेल्यांसाठी आहे' }
-    ],
-    steps: [
-      { text: 'Visit Gram Panchayat office', mode: 'offline' },
-      { text: 'Apply for PMAY-G registration', mode: 'offline' },
-      { text: 'Submit BPL Card and Aadhaar', mode: 'offline' },
-      { text: 'Wait for survey and verification', mode: 'offline' },
-      { text: 'Receive funds in installments after approval', mode: 'offline' }
-    ],
-    stepsHindi: ['ग्राम पंचायत कार्यालय जाएं', 'PMAY-G पंजीकरण के लिए आवेदन करें', 'BPL कार्ड और आधार जमा करें', 'सर्वेक्षण और सत्यापन का इंतज़ार करें', 'स्वीकृति के बाद किस्तों में राशि मिलेगी'],
-    stepsMr: ['ग्रामपंचायत कार्यालयात जा', 'PMAY-G नोंदणीसाठी अर्ज करा', 'BPL कार्ड आणि आधार जमा करा', 'सर्वेक्षण आणि पडताळणीची वाट पाहा', 'मंजुरीनंतर हप्त्यांमध्ये रक्कम मिळेल'],
-    documents: ['Aadhaar Card', 'BPL Ration Card', 'Bank Passbook', 'Income Certificate', 'Passport Photo'],
-    documentsHindi: ['आधार कार्ड', 'BPL राशन कार्ड', 'बैंक पासबुक', 'आय प्रमाण पत्र', 'पासपोर्ट फोटो'],
-    documentsMr: ['आधार कार्ड', 'BPL रेशन कार्ड', 'बँक पासबुक', 'उत्पन्नाचा दाखला', 'पासपोर्ट फोटो'],
-    officialUrl: 'https://pmayg.nic.in',
-    requiredDocuments: [
-      { type: 'aadhaar', required: true, labelKey: 'aadhaar', reasonKey: 'identityProof' },
-      { type: 'ration_card', required: true, labelKey: 'ration_card', reasonKey: 'householdProof' },
-      { type: 'income_certificate', required: true, labelKey: 'income_certificate', reasonKey: 'incomeProof' },
-      { type: 'bank_passbook', required: true, labelKey: 'bank_passbook', reasonKey: 'directBenefitTransfer' },
-    ],
-  },
-  {
-    id: 4,
-    nameHindi: 'आयुष्मान भारत PMJAY',
-    nameEnglish: 'Ayushman Bharat PMJAY',
-    nameMr: 'आयुष्मान भारत PMJAY',
-    logoText: 'आ',
-    logoColor: '#FF671F',
-    headerColor: '#FF671F',
-    ministry: 'Ministry of Health',
-    amount: '₹5 लाख',
-    unit: 'प्रति वर्ष',
-    unitHindi: 'प्रति वर्ष',
-    unitMr: 'प्रति वर्ष',
-    eligibility: 'eligible',
-    matchScore: 91,
-    matchLabel: 'High Match',
-    warning: null,
-    warningHindi: null,
-    warningMr: null,
-    applicationModes: ['Online', 'Hospital'],
-    rejectionRisks: [
-      { risk: 'Family not in SECC database', fix: 'Check eligibility at pmjay.gov.in using mobile number' },
-      { risk: 'Treatment at non-empanelled hospital', fix: 'Only empanelled hospitals accept Ayushman Card' }
-    ],
-    rejectionRisksHindi: [
-      { risk: 'परिवार SECC डेटाबेस में नहीं है', fix: 'मोबाइल नंबर से pmjay.gov.in पर पात्रता जाँचें' },
-      { risk: 'गैर-सूचीबद्ध अस्पताल में इलाज', fix: 'केवल सूचीबद्ध अस्पताल ही आयुष्मान कार्ड स्वीकार करते हैं' }
-    ],
-    rejectionRisksMr: [
-      { risk: 'कुटुंब SECC डेटाबेसमध्ये नाही', fix: 'मोबाइल क्रमांकाने pmjay.gov.in वर पात्रता तपासा' },
-      { risk: 'नोंदणी नसलेल्या रुग्णालयात उपचार', fix: 'फक्त नोंदणीकृत रुग्णालयेच आयुष्मान कार्ड स्वीकारतात' }
-    ],
-    steps: [
-      { text: 'Check eligibility at pmjay.gov.in', mode: 'online' },
-      { text: 'Visit nearest empanelled hospital or CSC', mode: 'csc' },
-      { text: 'Get Ayushman Card made with Aadhaar', mode: 'offline' },
-      { text: 'Show card at hospital during treatment', mode: 'offline' },
-      { text: 'Receive cashless treatment up to ₹5 lakh', mode: 'offline' }
-    ],
-    stepsHindi: ['pmjay.gov.in पर पात्रता जाँचें', 'नज़दीकी सूचीबद्ध अस्पताल या CSC जाएं', 'आधार से आयुष्मान कार्ड बनवाएं', 'इलाज के समय अस्पताल में कार्ड दिखाएं', '₹5 लाख तक का कैशलेस इलाज पाएं'],
-    stepsMr: ['pmjay.gov.in वर पात्रता तपासा', 'जवळच्या नोंदणीकृत रुग्णालयात किंवा CSC मध्ये जा', 'आधारसह आयुष्मान कार्ड बनवा', 'उपचारावेळी रुग्णालयात कार्ड दाखवा', '₹5 लाखांपर्यंत कॅशलेस उपचार मिळवा'],
-    documents: ['Aadhaar Card', 'Ration Card', 'Mobile Number'],
-    documentsHindi: ['आधार कार्ड', 'राशन कार्ड', 'मोबाइल नंबर'],
-    documentsMr: ['आधार कार्ड', 'रेशन कार्ड', 'मोबाइल क्रमांक'],
-    officialUrl: 'https://pmjay.gov.in',
-    requiredDocuments: [
-      { type: 'aadhaar', required: true, labelKey: 'aadhaar', reasonKey: 'identityProof' },
-      { type: 'ration_card', required: true, labelKey: 'ration_card', reasonKey: 'householdProof' },
-    ],
-  },
-  {
-    id: 5,
-    nameHindi: 'पीएम मुद्रा योजना',
-    nameEnglish: 'PM Mudra Yojana',
-    nameMr: 'पीएम मुद्रा योजना',
-    logoText: 'मु',
-    logoColor: '#E8690B',
-    headerColor: '#E8690B',
-    ministry: 'Ministry of Finance',
-    amount: '₹10 लाख',
-    unit: 'तक ऋण',
-    unitHindi: 'तक ऋण',
-    unitMr: 'पर्यंत कर्ज',
-    eligibility: 'eligible',
-    matchScore: 85,
-    matchLabel: 'High Match',
-    warning: 'Prior business experience required',
-    warningHindi: 'व्यापार का पूर्व अनुभव ज़रूरी है',
-    warningMr: 'व्यवसायाचा आधीचा अनुभव आवश्यक आहे',
-    applicationModes: ['Bank', 'NBFC'],
-    rejectionRisks: [
-      { risk: 'No business plan or proof of business activity', fix: 'Prepare a simple business plan before visiting bank' },
-      { risk: 'Poor credit history or existing loan default', fix: 'Check CIBIL score at bank before applying' }
-    ],
-    rejectionRisksHindi: [
-      { risk: 'व्यापार योजना या व्यापार गतिविधि का प्रमाण नहीं है', fix: 'बैंक जाने से पहले एक सरल व्यापार योजना तैयार करें' },
-      { risk: 'खराब क्रेडिट इतिहास या मौजूदा ऋण चूक', fix: 'आवेदन से पहले बैंक में CIBIL स्कोर जाँचें' }
-    ],
-    rejectionRisksMr: [
-      { risk: 'व्यवसाय योजना किंवा व्यवसाय क्रियाकलापाचा पुरावा नाही', fix: 'बँकेत जाण्यापूर्वी एक साधी व्यवसाय योजना तयार करा' },
-      { risk: 'खराब क्रेडिट इतिहास किंवा सध्याचे कर्ज थकीत', fix: 'अर्ज करण्यापूर्वी बँकेत CIBIL स्कोअर तपासा' }
-    ],
-    steps: [
-      { text: 'Visit nearest bank or NBFC', mode: 'offline' },
-      { text: 'Collect Mudra Loan Application Form', mode: 'offline' },
-      { text: 'Submit business plan and identity documents', mode: 'offline' },
-      { text: 'Bank processes application (7–30 days)', mode: 'offline' },
-      { text: 'Receive Mudra Card with loan amount', mode: 'offline' }
-    ],
-    stepsHindi: ['नज़दीकी बैंक या NBFC जाएं', 'Mudra Loan Application Form लें', 'व्यापार योजना और पहचान दस्तावेज़ जमा करें', 'बैंक आवेदन को प्रोसेस करेगा (7–30 दिन)', 'ऋण राशि के साथ Mudra Card पाएं'],
-    stepsMr: ['जवळच्या बँकेत किंवा NBFC मध्ये जा', 'Mudra Loan अर्ज फॉर्म घ्या', 'व्यवसाय योजना आणि ओळख कागदपत्रे द्या', 'बँक अर्जावर प्रक्रिया करेल (7–30 दिवस)', 'कर्ज रकमेसह Mudra Card मिळवा'],
-    documents: ['Aadhaar Card', 'PAN Card', 'Bank Passbook', 'Business Registration (if any)', 'Passport Photo'],
-    documentsHindi: ['आधार कार्ड', 'पैन कार्ड', 'बैंक पासबुक', 'व्यापार पंजीकरण (यदि हो)', 'पासपोर्ट फोटो'],
-    documentsMr: ['आधार कार्ड', 'पॅन कार्ड', 'बँक पासबुक', 'व्यवसाय नोंदणी (असल्यास)', 'पासपोर्ट फोटो'],
-    officialUrl: 'https://mudra.org.in',
-    requiredDocuments: [
-      { type: 'aadhaar', required: true, labelKey: 'aadhaar', reasonKey: 'identityProof' },
-      { type: 'bank_passbook', required: true, labelKey: 'bank_passbook', reasonKey: 'directBenefitTransfer' },
-      { type: 'income_certificate', required: false, labelKey: 'income_certificate', reasonKey: 'incomeProof' },
-    ],
-  },
-  {
-    id: 6,
-    nameHindi: 'पीएम उज्ज्वला योजना',
-    nameEnglish: 'PM Ujjwala Yojana',
-    nameMr: 'पीएम उज्ज्वला योजना',
-    logoText: 'उ',
-    logoColor: '#6A1B9A',
-    headerColor: '#6A1B9A',
-    ministry: 'Ministry of Petroleum',
-    amount: 'Free LPG',
-    unit: 'कनेक्शन',
-    unitHindi: 'कनेक्शन',
-    unitMr: 'कनेक्शन',
-    eligibility: 'eligible',
-    matchScore: 89,
-    matchLabel: 'High Match',
-    warning: 'BPL Ration Card mandatory',
-    warningHindi: 'BPL राशन कार्ड होना अनिवार्य है',
-    warningMr: 'BPL रेशन कार्ड असणे अनिवार्य आहे',
-    applicationModes: ['LPG Distributor'],
-    rejectionRisks: [
-      { risk: 'LPG connection already exists at address', fix: 'Only one connection per household' },
-      { risk: 'Name not matching BPL list', fix: 'Ensure Aadhaar name matches BPL ration card exactly' }
-    ],
-    rejectionRisksHindi: [
-      { risk: 'पते पर पहले से LPG कनेक्शन मौजूद है', fix: 'प्रति परिवार केवल एक कनेक्शन मिलेगा' },
-      { risk: 'नाम BPL सूची से मेल नहीं खाता', fix: 'सुनिश्चित करें कि आधार नाम BPL राशन कार्ड से बिल्कुल मेल खाए' }
-    ],
-    rejectionRisksMr: [
-      { risk: 'पत्त्यावर आधीच LPG कनेक्शन आहे', fix: 'प्रति कुटुंब फक्त एकच कनेक्शन मिळेल' },
-      { risk: 'नाव BPL यादीशी जुळत नाही', fix: 'आधार नाव BPL रेशन कार्डशी तंतोतंत जुळते याची खात्री करा' }
-    ],
-    steps: [
-      { text: 'Visit nearest LPG distributor', mode: 'offline' },
-      { text: 'Collect Ujjwala Application Form', mode: 'offline' },
-      { text: 'Submit BPL card, Aadhaar and bank details', mode: 'offline' },
-      { text: 'Verification by distributor (3–7 days)', mode: 'offline' },
-      { text: 'Receive free connection and first cylinder', mode: 'offline' }
-    ],
-    stepsHindi: ['नज़दीकी LPG वितरक के पास जाएं', 'Ujjwala Application Form लें', 'BPL कार्ड, आधार और बैंक विवरण जमा करें', 'वितरक द्वारा सत्यापन (3–7 दिन)', 'मुफ्त कनेक्शन और पहला सिलेंडर पाएं'],
-    stepsMr: ['जवळच्या LPG वितरकाकडे जा', 'उज्ज्वला अर्ज फॉर्म घ्या', 'BPL कार्ड, आधार आणि बँक तपशील जमा करा', 'वितरकाकडून पडताळणी (3–7 दिवस)', 'मोफत कनेक्शन आणि पहिला सिलेंडर मिळवा'],
-    documents: ['Aadhaar Card', 'BPL Ration Card', 'Bank Passbook', 'Passport Photo'],
-    documentsHindi: ['आधार कार्ड', 'BPL राशन कार्ड', 'बैंक पासबुक', 'पासपोर्ट फोटो'],
-    documentsMr: ['आधार कार्ड', 'BPL रेशन कार्ड', 'बँक पासबुक', 'पासपोर्ट फोटो'],
-    officialUrl: 'https://pmuy.gov.in',
-    requiredDocuments: [
-      { type: 'aadhaar', required: true, labelKey: 'aadhaar', reasonKey: 'identityProof' },
-      { type: 'ration_card', required: true, labelKey: 'ration_card', reasonKey: 'householdProof' },
-      { type: 'bank_passbook', required: true, labelKey: 'bank_passbook', reasonKey: 'directBenefitTransfer' },
-    ],
-  },
-  {
-    id: 7,
-    nameHindi: 'PMKVY कौशल विकास',
-    nameEnglish: 'PMKVY Skill Development',
-    nameMr: 'PMKVY कौशल्य विकास',
-    logoText: 'क',
-    logoColor: '#1565C0',
-    headerColor: '#1565C0',
-    ministry: 'Ministry of Skill Development',
-    amount: 'Free Training',
-    unit: 'Certificate',
-    unitHindi: 'प्रमाण पत्र के साथ',
-    unitMr: 'प्रमाणपत्रासह',
-    eligibility: 'eligible',
-    matchScore: 82,
-    matchLabel: 'High Match',
-    warning: null,
-    warningHindi: null,
-    warningMr: null,
-    applicationModes: ['Online', 'Training Centre'],
-    rejectionRisks: [
-      { risk: 'Centre not available for chosen skill', fix: 'Check pmkvyofficial.org for available courses near you' }
-    ],
-    rejectionRisksHindi: [
-      { risk: 'चुने गए कौशल के लिए केंद्र उपलब्ध नहीं है', fix: 'अपने पास उपलब्ध कोर्स के लिए pmkvyofficial.org देखें' }
-    ],
-    rejectionRisksMr: [
-      { risk: 'निवडलेल्या कौशल्यासाठी केंद्र उपलब्ध नाही', fix: 'जवळील उपलब्ध कोर्ससाठी pmkvyofficial.org पहा' }
-    ],
-    steps: [
-      { text: 'Visit pmkvyofficial.org', mode: 'online' },
-      { text: 'Find nearest training centre', mode: 'online' },
-      { text: 'Register with Aadhaar', mode: 'online' },
-      { text: 'Complete training course (3–6 months)', mode: 'offline' },
-      { text: 'Receive certificate and placement assistance', mode: 'offline' }
-    ],
-    stepsHindi: ['pmkvyofficial.org पर जाएं', 'नज़दीकी प्रशिक्षण केंद्र खोजें', 'आधार से पंजीकरण करें', 'प्रशिक्षण कोर्स पूरा करें (3–6 महीने)', 'प्रमाण पत्र और नौकरी सहायता पाएं'],
-    stepsMr: ['pmkvyofficial.org वर जा', 'जवळचे प्रशिक्षण केंद्र शोधा', 'आधारसह नोंदणी करा', 'प्रशिक्षण अभ्यासक्रम पूर्ण करा (3–6 महिने)', 'प्रमाणपत्र आणि नोकरी सहाय्य मिळवा'],
-    documents: ['Aadhaar Card', 'Educational Certificate', 'Passport Photo'],
-    documentsHindi: ['आधार कार्ड', 'शैक्षणिक प्रमाण पत्र', 'पासपोर्ट फोटो'],
-    documentsMr: ['आधार कार्ड', 'शैक्षणिक प्रमाणपत्र', 'पासपोर्ट फोटो'],
-    officialUrl: 'https://pmkvyofficial.org',
-    requiredDocuments: [
-      { type: 'aadhaar', required: true, labelKey: 'aadhaar', reasonKey: 'identityProof' },
-      { type: 'passport_photo', required: true, labelKey: 'passport_photo', reasonKey: 'photoRequirement' },
-    ],
-  },
-  {
-    id: 8,
-    nameHindi: 'सुकन्या समृद्धि योजना',
-    nameEnglish: 'Sukanya Samridhi Yojana',
-    nameMr: 'सुकन्या समृद्धी योजना',
-    logoText: 'सु',
-    logoColor: '#880E4F',
-    headerColor: '#880E4F',
-    ministry: 'Ministry of Finance',
-    amount: '8.2% ब्याज',
-    unit: 'बेटी बचत',
-    unitHindi: 'बेटी बचत',
-    unitMr: 'मुलीसाठी बचत',
-    eligibility: 'partial',
-    matchScore: 68,
-    matchLabel: 'Partial Match',
-    warning: 'Girl child must be under 10 years',
-    warningHindi: 'बेटी की उम्र 10 साल से कम होनी चाहिए',
-    warningMr: 'मुलीचे वय 10 वर्षांपेक्षा कमी असणे आवश्यक आहे',
-    applicationModes: ['Post Office', 'Bank'],
-    rejectionRisks: [
-      { risk: 'Girl child above 10 years', fix: 'Scheme is only for girls below 10 years' }
-    ],
-    rejectionRisksHindi: [
-      { risk: 'बेटी की उम्र 10 साल से अधिक है', fix: 'यह योजना केवल 10 साल से कम उम्र की बेटियों के लिए है' }
-    ],
-    rejectionRisksMr: [
-      { risk: 'मुलीचे वय 10 वर्षांपेक्षा जास्त आहे', fix: 'ही योजना फक्त 10 वर्षांखालील मुलींसाठी आहे' }
-    ],
-    steps: [
-      { text: 'Visit nearest Post Office or bank', mode: 'offline' },
-      { text: 'Collect Sukanya Samridhi Form', mode: 'offline' },
-      { text: 'Submit girl child birth certificate and Aadhaar', mode: 'offline' },
-      { text: 'Open account with minimum ₹250', mode: 'offline' },
-      { text: 'Deposit annually until girl turns 15', mode: 'offline' }
-    ],
-    stepsHindi: ['नज़दीकी पोस्ट ऑफिस या बैंक जाएं', 'Sukanya Samridhi Form लें', 'बेटी का जन्म प्रमाण पत्र और आधार जमा करें', 'न्यूनतम ₹250 से खाता खोलें', 'बेटी के 15 साल की होने तक हर साल जमा करें'],
-    stepsMr: ['जवळच्या पोस्ट ऑफिस किंवा बँकेत जा', 'सुकन्या समृद्धी फॉर्म घ्या', 'मुलीचे जन्म प्रमाणपत्र आणि आधार जमा करा', 'किमान ₹250 ने खाते उघडा', 'मुलगी 15 वर्षांची होईपर्यंत दरवर्षी जमा करा'],
-    documents: ['Girl Child Birth Certificate', 'Aadhaar (parent and child)', 'Bank Passbook'],
-    documentsHindi: ['बेटी का जन्म प्रमाण पत्र', 'आधार (माता-पिता और बेटी)', 'बैंक पासबुक'],
-    documentsMr: ['मुलीचे जन्म प्रमाणपत्र', 'आधार (पालक आणि मूल)', 'बँक पासबुक'],
-    officialUrl: 'https://www.indiapost.gov.in',
-    requiredDocuments: [
-      { type: 'aadhaar', required: true, labelKey: 'aadhaar', reasonKey: 'identityProof' },
-      { type: 'bank_passbook', required: true, labelKey: 'bank_passbook', reasonKey: 'directBenefitTransfer' },
-      { type: 'domicile_certificate', required: false, labelKey: 'domicile_certificate', reasonKey: 'residenceProof' },
-    ],
-  }
+const PALETTE = [
+  { header: '#1A6B3C', logo: '#1A6B3C' },
+  { header: '#E8690B', logo: '#E8690B' },
+  { header: '#1565C0', logo: '#1565C0' },
+  { header: '#6A1B9A', logo: '#6A1B9A' },
+  { header: '#880E4F', logo: '#880E4F' },
+  { header: '#0F766E', logo: '#0F766E' },
 ]
+
+function paletteFor(index: number) {
+  return PALETTE[((index % PALETTE.length) + PALETTE.length) % PALETTE.length]
+}
+
+function eligibilityFromScore(score: number): EligibilityStatus {
+  if (score >= 70) return 'eligible'
+  if (score >= 40) return 'partial'
+  return 'ineligible'
+}
+
+/**
+ * Real backend adapters — replace the old hardcoded `allSchemes` mock data.
+ *
+ * POST /schemes/search only returns relevance data (name, match_score,
+ * reasons, warnings), so matchToSchemeItem() leaves ministry/documents/steps
+ * empty; those are filled in by detailToSchemeItem() once GET
+ * /schemes/{id} is called for the selected scheme. The three nameHindi/
+ * nameEnglish/nameMr (etc.) fields all get the same value because the
+ * backend already resolves translation server-side for the requested
+ * `language` — there is no client-side multi-language scheme data anymore.
+ */
+function matchToSchemeItem(match: ApiSchemeMatch, index: number): SchemeItem {
+  const colors = paletteFor(index)
+  const name = match.name
+  const warning = match.warnings[0] ?? null
+  return {
+    id: index,
+    schemeId: match.scheme_id,
+    nameHindi: name, nameEnglish: name, nameMr: name,
+    logoText: name.charAt(0).toUpperCase(),
+    logoColor: colors.logo,
+    headerColor: colors.header,
+    ministry: '',
+    category: null,
+    amount: '',
+    unit: '', unitHindi: '', unitMr: '',
+    eligibility: eligibilityFromScore(match.match_score),
+    matchScore: match.match_score,
+    matchLabel: match.match_score >= 70 ? 'High Match' : 'Partial Match',
+    warning, warningHindi: warning, warningMr: warning,
+    applicationModes: [],
+    rejectionRisks: [], rejectionRisksHindi: [], rejectionRisksMr: [],
+    steps: [], stepsHindi: [], stepsMr: [],
+    documents: [], documentsHindi: [], documentsMr: [],
+    officialUrl: '',
+    requiredDocuments: [],
+    reasons: match.reasons,
+  }
+}
+
+function detailToSchemeItem(
+  detail: ApiSchemeDetail,
+  index: number,
+  matchScore: number,
+  reasons: ApiMatchReason[],
+  warnings: string[]
+): SchemeItem {
+  const colors = paletteFor(index)
+  const name = detail.name
+  const warning = detail.warning ?? warnings[0] ?? null
+  const applyStepText = (mode: string) => `Apply via ${mode}`
+  const applyMode = (mode: string): 'online' | 'offline' | 'csc' => {
+    const m = mode.toLowerCase()
+    if (m.includes('csc')) return 'csc'
+    if (m.includes('online')) return 'online'
+    return 'offline'
+  }
+  return {
+    id: index,
+    schemeId: detail.scheme_code,
+    nameHindi: name, nameEnglish: name, nameMr: name,
+    logoText: name.charAt(0).toUpperCase(),
+    logoColor: colors.logo,
+    headerColor: colors.header,
+    ministry: detail.ministry ?? '',
+    category: detail.category,
+    amount: detail.benefits ?? detail.description ?? '',
+    unit: '', unitHindi: '', unitMr: '',
+    eligibility: eligibilityFromScore(matchScore),
+    matchScore,
+    matchLabel: matchScore >= 70 ? 'High Match' : 'Partial Match',
+    warning, warningHindi: warning, warningMr: warning,
+    applicationModes: detail.application_modes,
+    rejectionRisks: detail.rejection_risks,
+    rejectionRisksHindi: detail.rejection_risks,
+    rejectionRisksMr: detail.rejection_risks,
+    steps: detail.application_modes.map(mode => ({ text: applyStepText(mode), mode: applyMode(mode) })),
+    stepsHindi: detail.application_modes.map(mode => `${mode} के ज़रिए आवेदन करें`),
+    stepsMr: detail.application_modes.map(mode => `${mode} मार्गे अर्ज करा`),
+    documents: detail.documents_required,
+    documentsHindi: detail.documents_required,
+    documentsMr: detail.documents_required,
+    officialUrl: detail.application_url ?? detail.source_url ?? '',
+    requiredDocuments: [],
+    reasons,
+  }
+}
+
+const EMPTY_SCHEME: SchemeItem = matchToSchemeItem(
+  { scheme_id: '', name: '', match_score: 0, reasons: [], warnings: [] },
+  0
+)
 
 const trackerData: TrackerItem[] = [
   { id: 1, schemeName: 'PM Kisan Samman Nidhi', schemeNameHindi: 'पीएम किसान सम्मान निधि', schemeNameMr: 'पीएम किसान सन्मान निधी', logoText: 'पी', logoColor: '#1A6B3C', dateApplied: '15 Jan 2025', referenceNumber: 'PMKISAN-MH-2025-18832', status: 'approved', nextStep: 'Next installment due April 2025. Check bank account on 1st April.', nextStepHindi: 'अगली किस्त अप्रैल 2025 में देय है। 1 अप्रैल को बैंक खाता जाँचें।', nextStepMr: 'पुढील हप्ता एप्रिल 2025 मध्ये देय आहे. 1 एप्रिल रोजी बँक खाते तपासा.', borderColor: '#1A6B3C' },
@@ -588,38 +315,19 @@ function getStatusStyle(s: AppStatus, lang: Lang) {
   return map[s]
 }
 
+/** Best-effort mapping from the backend's free-text `category` field to the
+ * fixed set of demo categories the Application Preparation form's sample
+ * sentences are keyed on. Falls back to 'general' for unmapped/unfetched
+ * schemes (search results don't carry category — only detail does). */
 function getSchemeCategory(scheme: SchemeItem): string {
-  if (scheme.id === 1 || scheme.id === 2) return 'farmer'
-  if (scheme.id === 3) return 'housing'
-  if (scheme.id === 4) return 'health'
-  if (scheme.id === 5) return 'business'
-  if (scheme.id === 6 || scheme.id === 8) return 'women'
-  if (scheme.id === 7) return 'student'
+  const c = (scheme.category ?? '').toLowerCase()
+  if (c.includes('farm') || c.includes('agri') || c.includes('कृषि')) return 'farmer'
+  if (c.includes('hous') || c.includes('awas') || c.includes('rural dev')) return 'housing'
+  if (c.includes('health') || c.includes('medical')) return 'health'
+  if (c.includes('business') || c.includes('finance') || c.includes('loan') || c.includes('msme')) return 'business'
+  if (c.includes('women') || c.includes('girl')) return 'women'
+  if (c.includes('student') || c.includes('educat') || c.includes('skill')) return 'student'
   return 'general'
-}
-
-function filterSchemes(schemes: SchemeItem[], query: string): SchemeItem[] {
-  if (!query.trim()) return schemes
-  const q = query.toLowerCase()
-  const isFarmer = q.includes('किसान') || q.includes('kisan') || q.includes('farmer') || q.includes('खेती') || q.includes('fasal') || q.includes('फसल') || q.includes('agriculture') || q.includes('crop') || q.includes('शेतकरी') || q.includes('शेती')
-  const isWomen = q.includes('महिला') || q.includes('women') || q.includes('woman') || q.includes('beti') || q.includes('ujjwala')
-  const isStudent = q.includes('student') || q.includes('छात्र') || q.includes('scholarship') || q.includes('शिक्षा') || q.includes('education') || q.includes('skill') || q.includes('विद्यार्थी') || q.includes('शिक्षण')
-  const isHousing = q.includes('घर') || q.includes('housing') || q.includes('awas') || q.includes('home') || q.includes('house')
-  const isSenior = q.includes('pension') || q.includes('पेंशन') || q.includes('health') || q.includes('hospital') || q.includes('ayushman') || q.includes('आरोग्य')
-  const isBusiness = q.includes('business') || q.includes('loan') || q.includes('mudra') || q.includes('कर्ज़') || q.includes('कर्ज') || q.includes('व्यवसाय')
-
-  return schemes.filter(s => {
-    if (isFarmer && (s.id === 1 || s.id === 2)) return true
-    if (isWomen && (s.id === 6 || s.id === 8)) return true
-    if (isStudent && s.id === 7) return true
-    if (isHousing && s.id === 3) return true
-    if (isSenior && s.id === 4) return true
-    if (isBusiness && s.id === 5) return true
-    if (s.nameEnglish.toLowerCase().includes(q)) return true
-    if (s.nameHindi.includes(q)) return true
-    if (s.nameMr.includes(q)) return true
-    return false
-  })
 }
 
 function FullModePageContent() {
@@ -629,11 +337,18 @@ function FullModePageContent() {
   // Core state
   const [activePanel, setActivePanel] = useState<ActivePanel>('schemes')
   const [searchQuery, setSearchQuery] = useState('')
-  const [results, setResults] = useState<SchemeItem[]>(allSchemes)
+  const [results, setResults] = useState<SchemeItem[]>([])
   const [hasSearched, setHasSearched] = useState(false)
-  const [selectedScheme, setSelectedScheme] = useState<SchemeItem>(allSchemes[0])
+  const [selectedScheme, setSelectedScheme] = useState<SchemeItem>(EMPTY_SCHEME)
+  const [compareIds, setCompareIds] = useState<string[]>([])
   const [compareList, setCompareList] = useState<SchemeItem[]>([])
-  const [savedIds, setSavedIds] = useState<number[]>([])
+  const [savedIds, setSavedIds] = useState<string[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const [compareLoading, setCompareLoading] = useState(false)
+  const [compareError, setCompareError] = useState<string | null>(null)
   const [checkedDocs, setCheckedDocs] = useState<Record<number, boolean>>({ 0: true, 1: true })
   const [referenceNumber, setReferenceNumber] = useState('')
   const [scriptLang, setScriptLang] = useState<'hindi' | 'marathi' | 'english'>('hindi')
@@ -644,7 +359,13 @@ function FullModePageContent() {
   const [trackerFilter, setTrackerFilter] = useState('all')
   const [isListening, setIsListening] = useState(false)
   const [sortBy, setSortBy] = useState('match')
-  const [lang, setLang] = useState<Lang>('en-IN')
+  // Full Mode's own selector only ever offers these 3 (see the <select>
+  // below) — narrower than the app-wide Lang (10 codes, as of the landing
+  // page i18n expansion) on purpose, since it flows into the
+  // document-readiness subsystem's DocLang-typed props, which are still
+  // Hindi/Marathi/English only by design. A narrower type here is safely
+  // assignable everywhere the wider Lang is expected (g/gf calls below).
+  const [lang, setLang] = useState<'hi-IN' | 'mr-IN' | 'en-IN'>('en-IN')
 
   // Profile state
   const [hasProfile, setHasProfile] = useState(false)
@@ -717,36 +438,107 @@ function FullModePageContent() {
     setHasStoredDocData(false)
   }
 
+  // Fetches full scheme detail (GET /schemes/{id}) and shows it in the right
+  // panel. matchScore/reasons/warnings come from the search hit that was
+  // clicked, since the detail endpoint itself doesn't return relevance data.
+  const selectScheme = useCallback(async (
+    schemeId: string,
+    matchScore: number,
+    reasons: ApiMatchReason[],
+    warnings: string[],
+    index: number
+  ) => {
+    setDetailLoading(true)
+    setDetailError(null)
+    try {
+      const detail = await apiGetScheme(schemeId, toApiLanguage(lang))
+      setSelectedScheme(detailToSchemeItem(detail, index, matchScore, reasons, warnings))
+    } catch (err) {
+      setDetailError(err instanceof ApiError ? err.message : 'Failed to load scheme details.')
+    } finally {
+      setDetailLoading(false)
+    }
+  }, [lang])
+
+  const runSearch = useCallback(async (query: string) => {
+    const trimmed = query.trim()
+    if (!trimmed) return
+    setSearchLoading(true)
+    setSearchError(null)
+    try {
+      const matches = await apiSearchSchemes(trimmed, toApiLanguage(lang), 20)
+      const items = matches.map((m, i) => matchToSchemeItem(m, i))
+      setResults(items)
+      setHasSearched(true)
+      if (items.length > 0) {
+        selectScheme(items[0].schemeId, items[0].matchScore, items[0].reasons, matches[0].warnings, 0)
+      }
+    } catch (err) {
+      setSearchError(err instanceof ApiError ? err.message : 'Search failed.')
+      setResults([])
+    } finally {
+      setSearchLoading(false)
+    }
+  }, [lang, selectScheme])
+
   // URL param on mount
   useEffect(() => {
     const q = searchParams.get('q')
     if (q) {
       setSearchQuery(q)
-      const filtered = filterSchemes(allSchemes, q)
-      setResults(filtered.length > 0 ? filtered : allSchemes)
-      setHasSearched(true)
-      if (filtered.length > 0) setSelectedScheme(filtered[0])
+      runSearch(q)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
   const handleSearch = () => {
-    const filtered = filterSchemes(allSchemes, searchQuery)
-    setResults(filtered.length > 0 ? filtered : allSchemes)
-    setHasSearched(true)
-    if (filtered.length > 0) setSelectedScheme(filtered[0])
+    runSearch(searchQuery)
   }
 
-  const toggleSave = (id: number) => {
+  const toggleSave = (id: string) => {
     setSavedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   }
 
   const toggleCompare = (scheme: SchemeItem) => {
-    setCompareList(prev => {
-      if (prev.find(s => s.id === scheme.id)) return prev.filter(s => s.id !== scheme.id)
+    setCompareIds(prev => {
+      if (prev.includes(scheme.schemeId)) return prev.filter(id => id !== scheme.schemeId)
       if (prev.length >= 3) { alert(g(S.full.maxCompare, lang)); return prev }
-      return [...prev, scheme]
+      return [...prev, scheme.schemeId]
     })
   }
+
+  const compareTrayItems = compareIds
+    .map(id => results.find(r => r.schemeId === id))
+    .filter((s): s is SchemeItem => !!s)
+
+  // POST /schemes/compare needs >=2 ids; fetch whenever the selection crosses
+  // that threshold, and clear the fetched detail otherwise.
+  useEffect(() => {
+    if (compareIds.length < 2) {
+      setCompareList([])
+      setCompareError(null)
+      return
+    }
+    let cancelled = false
+    setCompareLoading(true)
+    setCompareError(null)
+    apiCompareSchemes(compareIds, toApiLanguage(lang))
+      .then(details => {
+        if (cancelled) return
+        setCompareList(details.map((d, i) => {
+          const hit = results.find(r => r.schemeId === d.scheme_code)
+          return detailToSchemeItem(d, i, hit?.matchScore ?? 0, hit?.reasons ?? [], hit?.warning ? [hit.warning] : [])
+        }))
+      })
+      .catch(err => {
+        if (!cancelled) setCompareError(err instanceof ApiError ? err.message : 'Failed to load comparison.')
+      })
+      .finally(() => {
+        if (!cancelled) setCompareLoading(false)
+      })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compareIds, lang])
 
   const toggleDoc = (index: number) => {
     setCheckedDocs(prev => ({ ...prev, [index]: !prev[index] }))
@@ -808,10 +600,7 @@ function FullModePageContent() {
       const transcript = event.results[0][0].transcript
       setSearchQuery(transcript)
       setIsListening(false)
-      const filtered = filterSchemes(allSchemes, transcript)
-      setResults(filtered.length > 0 ? filtered : allSchemes)
-      setHasSearched(true)
-      if (filtered.length > 0) setSelectedScheme(filtered[0])
+      runSearch(transcript)
     }
     recognition.onerror = () => setIsListening(false)
     recognition.onend = () => setIsListening(false)
@@ -1097,7 +886,7 @@ Place: ${profileData.state}`
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <select
               value={lang}
-              onChange={(e) => setLang(e.target.value as Lang)}
+              onChange={(e) => setLang(e.target.value as 'hi-IN' | 'mr-IN' | 'en-IN')}
               style={{ fontSize: '10px', fontWeight: 700, border: '1px solid #E7E0D8', borderRadius: '5px', padding: '4px 8px', background: 'white', cursor: 'pointer', outline: 'none', color: '#1C1917' }}
             >
               <option value="hi-IN">हिंदी</option>
@@ -1177,7 +966,11 @@ Place: ${profileData.state}`
                 {/* RESULTS HEADER */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <div style={{ fontSize: '11px', color: '#78716C' }}>
-                    {hasSearched ? gf(S.full.schemesFound, lang, results.length) : gf(S.full.showingAll, lang, allSchemes.length)}
+                    {searchLoading
+                      ? 'Searching…'
+                      : hasSearched
+                        ? gf(S.full.schemesFound, lang, results.length)
+                        : 'Type a query above and press Search'}
                   </div>
                   <div style={{ display: 'flex', gap: '4px' }}>
                     {['match', 'amount', 'ease'].map(sort => (
@@ -1198,26 +991,32 @@ Place: ${profileData.state}`
                   </div>
                 </div>
 
+                {searchError && (
+                  <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#DC2626', borderRadius: '7px', padding: '8px 10px', fontSize: '11px', marginBottom: '10px' }}>
+                    {searchError}
+                  </div>
+                )}
+
                 {/* RESULTS LIST */}
                 <div>
                   {results.map(scheme => (
                     <div
-                      key={scheme.id}
+                      key={scheme.schemeId}
                       style={{
                         background: 'white', borderRadius: '8px',
-                        border: '1.5px solid', borderColor: selectedScheme?.id === scheme.id ? '#E8690B' : 'transparent',
+                        border: '1.5px solid', borderColor: selectedScheme.schemeId === scheme.schemeId ? '#E8690B' : 'transparent',
                         marginBottom: '6px', cursor: 'pointer', transition: 'all 0.15s',
-                        boxShadow: selectedScheme?.id === scheme.id ? '0 2px 10px rgba(232,105,11,0.15)' : '0 1px 3px rgba(0,0,0,0.05)'
+                        boxShadow: selectedScheme.schemeId === scheme.schemeId ? '0 2px 10px rgba(232,105,11,0.15)' : '0 1px 3px rgba(0,0,0,0.05)'
                       }}
-                      onClick={() => setSelectedScheme(scheme)}
+                      onClick={() => selectScheme(scheme.schemeId, scheme.matchScore, scheme.reasons, scheme.warning ? [scheme.warning] : [], scheme.id)}
                       onMouseEnter={(e) => {
-                        if (selectedScheme?.id !== scheme.id) {
+                        if (selectedScheme.schemeId !== scheme.schemeId) {
                           e.currentTarget.style.boxShadow = '0 3px 10px rgba(0,0,0,0.1)'
                           e.currentTarget.style.transform = 'translateY(-1px)'
                         }
                       }}
                       onMouseLeave={(e) => {
-                        if (selectedScheme?.id !== scheme.id) {
+                        if (selectedScheme.schemeId !== scheme.schemeId) {
                           e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.05)'
                           e.currentTarget.style.transform = 'none'
                         }
@@ -1265,7 +1064,7 @@ Place: ${profileData.state}`
                               padding: '4px 9px', fontSize: '10px', fontWeight: 700, cursor: 'pointer',
                               fontFamily: 'inherit', whiteSpace: 'nowrap'
                             }}
-                            onClick={(e) => { e.stopPropagation(); setSelectedScheme(scheme) }}
+                            onClick={(e) => { e.stopPropagation(); selectScheme(scheme.schemeId, scheme.matchScore, scheme.reasons, scheme.warning ? [scheme.warning] : [], scheme.id) }}
                           >
                             {g(S.full.viewDetails, lang)}
                           </button>
@@ -1273,28 +1072,28 @@ Place: ${profileData.state}`
                             <button
                               style={{
                                 width: '22px', height: '22px', borderRadius: '50%',
-                                border: '1px solid', borderColor: savedIds.includes(scheme.id) ? '#FED7AA' : '#E7E0D8',
-                                background: savedIds.includes(scheme.id) ? '#FFF8F1' : 'white',
+                                border: '1px solid', borderColor: savedIds.includes(scheme.schemeId) ? '#FED7AA' : '#E7E0D8',
+                                background: savedIds.includes(scheme.schemeId) ? '#FFF8F1' : 'white',
                                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                                 cursor: 'pointer', fontSize: '10px', fontWeight: 700,
-                                color: savedIds.includes(scheme.id) ? '#E8690B' : '#A8A29E'
+                                color: savedIds.includes(scheme.schemeId) ? '#E8690B' : '#A8A29E'
                               }}
-                              onClick={(e) => { e.stopPropagation(); toggleSave(scheme.id) }}
+                              onClick={(e) => { e.stopPropagation(); toggleSave(scheme.schemeId) }}
                             >
-                              {savedIds.includes(scheme.id) ? '⭐' : '☆'}
+                              {savedIds.includes(scheme.schemeId) ? '⭐' : '☆'}
                             </button>
                             <button
                               style={{
                                 width: '22px', height: '22px', borderRadius: '50%',
-                                border: '1px solid', borderColor: compareList.find(s => s.id === scheme.id) ? '#BFDBFE' : '#E7E0D8',
-                                background: compareList.find(s => s.id === scheme.id) ? '#EFF6FF' : 'white',
+                                border: '1px solid', borderColor: compareIds.includes(scheme.schemeId) ? '#BFDBFE' : '#E7E0D8',
+                                background: compareIds.includes(scheme.schemeId) ? '#EFF6FF' : 'white',
                                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                                 cursor: 'pointer', fontSize: '10px', fontWeight: 700,
-                                color: compareList.find(s => s.id === scheme.id) ? '#1565C0' : '#A8A29E'
+                                color: compareIds.includes(scheme.schemeId) ? '#1565C0' : '#A8A29E'
                               }}
                               onClick={(e) => { e.stopPropagation(); toggleCompare(scheme) }}
                             >
-                              {compareList.find(s => s.id === scheme.id) ? '✓C' : '+C'}
+                              {compareIds.includes(scheme.schemeId) ? '✓C' : '+C'}
                             </button>
                           </div>
                         </div>
@@ -1310,6 +1109,15 @@ Place: ${profileData.state}`
                           <span style={{ fontSize: '9px', color: '#D97706', fontWeight: 700, cursor: 'pointer' }}>{g(S.full.fixArrow, lang)}</span>
                         </div>
                       )}
+                      {scheme.reasons.length > 0 && (
+                        <div style={{ borderTop: scheme.warning ? 'none' : '1px solid #F4F1EC', padding: '4px 10px 6px 14px' }}>
+                          {scheme.reasons.slice(0, 2).map((r, i) => (
+                            <div key={i} style={{ fontSize: '8px', color: '#78716C' }}>
+                              · {r.matched} ({r.weight}%)
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1317,6 +1125,14 @@ Place: ${profileData.state}`
 
               {/* RIGHT COLUMN - SCHEME DETAIL PANEL */}
               <div style={{ background: 'white', borderRadius: '8px', overflow: 'hidden', position: 'sticky', top: 0 }}>
+                {detailError && (
+                  <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#DC2626', borderRadius: '7px', padding: '8px 10px', fontSize: '11px', margin: '10px' }}>
+                    {detailError}
+                  </div>
+                )}
+                {detailLoading && (
+                  <div style={{ padding: '10px 12px', fontSize: '11px', color: '#78716C' }}>Loading scheme details…</div>
+                )}
                 {/* HEADER */}
                 <div style={{ padding: '12px', background: selectedScheme.headerColor }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
@@ -1333,7 +1149,7 @@ Place: ${profileData.state}`
                     </div>
                   </div>
                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', borderRadius: '99px', padding: '2px 7px', fontSize: '9px', fontWeight: 700, background: selectedScheme.eligibility === 'eligible' ? '#F0FDF4' : '#FFFBEB', color: selectedScheme.eligibility === 'eligible' ? '#15803D' : '#D97706' }}>
-                    {selectedScheme.eligibility === 'eligible' ? `${g(S.full.eligible, lang)} — ` : `${g(S.full.partial, lang)} — `}{gf(S.full.matchPercent, lang, selectedScheme.matchScore)}
+                    {selectedScheme.eligibility === 'eligible' ? `${g(S.full.highMatch, lang)} — ` : `${g(S.full.partialMatch, lang)} — `}{gf(S.full.matchPercent, lang, selectedScheme.matchScore)}
                   </div>
                   <div style={{ display: 'flex', background: 'rgba(0,0,0,0.18)', borderRadius: '5px', overflow: 'hidden', marginTop: '6px' }}>
                     <div style={{ flex: 1, padding: '5px 7px', borderRight: '1px solid rgba(255,255,255,0.1)' }}>
@@ -1353,31 +1169,21 @@ Place: ${profileData.state}`
 
                 {/* SCROLLABLE BODY */}
                 <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '340px', overflowY: 'auto' }}>
-                  {/* ELIGIBILITY CHECK */}
+                  {/* WHY THIS MATCHED (real reasons from POST /schemes/search) */}
                   <div>
                     <div style={{ fontSize: '8px', textTransform: 'uppercase', letterSpacing: '0.07em', color: '#A8A29E', fontWeight: 700, marginBottom: '4px' }}>
                       {g(S.full.eligibilityCheck, lang)}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '3px' }}>
-                      <div style={{ width: '13px', height: '13px', borderRadius: '50%', background: '#1A6B3C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '7px', color: 'white', fontWeight: 700 }}>✓</div>
-                      <span style={{ fontSize: '10px', color: '#1C1917' }}>{g(S.full.eligRow1, lang)}</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '3px' }}>
-                      <div style={{ width: '13px', height: '13px', borderRadius: '50%', background: '#1A6B3C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '7px', color: 'white', fontWeight: 700 }}>✓</div>
-                      <span style={{ fontSize: '10px', color: '#1C1917' }}>{g(S.full.eligRow2, lang)}</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '3px' }}>
-                      <div style={{ width: '13px', height: '13px', borderRadius: '50%', background: '#1A6B3C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '7px', color: 'white', fontWeight: 700 }}>✓</div>
-                      <span style={{ fontSize: '10px', color: '#1C1917' }}>{g(S.full.eligRow3, lang)}</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '3px' }}>
-                      <div style={{ width: '13px', height: '13px', borderRadius: '50%', background: selectedScheme.eligibility === 'partial' ? '#D97706' : '#1A6B3C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '7px', color: 'white', fontWeight: 700 }}>
-                        {selectedScheme.eligibility === 'partial' ? '!' : '✓'}
-                      </div>
-                      <span style={{ fontSize: '10px', color: selectedScheme.eligibility === 'partial' ? '#D97706' : '#1C1917' }}>
-                        {selectedScheme.eligibility === 'partial' ? g(S.full.eligRow4Partial, lang) : g(S.full.eligRow4, lang)}
-                      </span>
-                    </div>
+                    {selectedScheme.reasons.length === 0 ? (
+                      <div style={{ fontSize: '10px', color: '#A8A29E' }}>No match details available.</div>
+                    ) : (
+                      selectedScheme.reasons.map((r, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '3px' }}>
+                          <div style={{ width: '13px', height: '13px', borderRadius: '50%', background: '#1A6B3C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '7px', color: 'white', fontWeight: 700 }}>✓</div>
+                          <span style={{ fontSize: '10px', color: '#1C1917' }}>{r.matched} <span style={{ color: '#A8A29E' }}>({r.weight}%)</span></span>
+                        </div>
+                      ))
+                    )}
                   </div>
 
                   {/* REJECTION RISKS */}
@@ -1467,9 +1273,9 @@ Place: ${profileData.state}`
                       padding: '7px', fontSize: '10px', fontWeight: 700, cursor: 'pointer',
                       fontFamily: 'inherit', width: '100%'
                     }}
-                    onClick={() => toggleSave(selectedScheme.id)}
+                    onClick={() => toggleSave(selectedScheme.schemeId)}
                   >
-                    {savedIds.includes(selectedScheme.id) ? g(S.full.schemeSaved, lang) : g(S.full.saveScheme, lang)}
+                    {savedIds.includes(selectedScheme.schemeId) ? g(S.full.schemeSaved, lang) : g(S.full.saveScheme, lang)}
                   </button>
                   <button
                     style={{
@@ -1497,7 +1303,7 @@ Place: ${profileData.state}`
           )}
 
           {/* COMPARE TRAY */}
-          {compareList.length > 0 && (
+          {compareIds.length > 0 && (
             <div style={{
               position: 'fixed', bottom: 0, left: '200px', right: 0, height: '48px',
               background: 'white', borderTop: '2px solid #E8690B',
@@ -1506,12 +1312,12 @@ Place: ${profileData.state}`
             }}>
               <span style={{ fontSize: '10px', fontWeight: 700, color: '#1C1917', flexShrink: 0 }}>{g(S.full.comparing, lang)}</span>
               <div style={{ flex: 1, display: 'flex', gap: '5px' }}>
-                {compareList.map(scheme => (
-                  <div key={scheme.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#FFF8F1', border: '1px solid #FED7AA', borderRadius: '5px', padding: '4px 8px', fontSize: '10px', fontWeight: 700, color: '#1C1917' }}>
+                {compareTrayItems.map(scheme => (
+                  <div key={scheme.schemeId} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#FFF8F1', border: '1px solid #FED7AA', borderRadius: '5px', padding: '4px 8px', fontSize: '10px', fontWeight: 700, color: '#1C1917' }}>
                     {getSchemeName(scheme, lang)}
                     <button
                       style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#A8A29E', fontSize: '11px', padding: 0, marginLeft: '2px' }}
-                      onClick={() => setCompareList(prev => prev.filter(s => s.id !== scheme.id))}
+                      onClick={() => setCompareIds(prev => prev.filter(id => id !== scheme.schemeId))}
                     >
                       ×
                     </button>
@@ -1526,7 +1332,7 @@ Place: ${profileData.state}`
               </button>
               <button
                 style={{ fontSize: '10px', color: '#A8A29E', cursor: 'pointer', background: 'none', border: 'none', fontFamily: 'inherit' }}
-                onClick={() => setCompareList([])}
+                onClick={() => setCompareIds([])}
               >
                 {g(S.full.clearAll, lang)}
               </button>
@@ -1536,7 +1342,15 @@ Place: ${profileData.state}`
           {/* OTHER PANELS - PLACEHOLDERS */}
           {activePanel === 'compare' && (
             <div style={{ maxWidth: '900px', margin: '0 auto' }}>
-              {compareList.length === 0 ? (
+              {compareError && (
+                <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#DC2626', borderRadius: '7px', padding: '8px 10px', fontSize: '11px', marginBottom: '10px' }}>
+                  {compareError}
+                </div>
+              )}
+              {compareLoading && (
+                <div style={{ textAlign: 'center', paddingTop: '40px', fontSize: '11px', color: '#78716C' }}>Loading comparison…</div>
+              )}
+              {compareLoading ? null : compareList.length === 0 ? (
                 <div style={{ textAlign: 'center', paddingTop: '40px' }}>
                   <div style={{ fontSize: '14px', fontFamily: 'Georgia, serif', fontWeight: 700, color: '#A8A29E' }}>
                     {g(S.full.noSchemesCompare, lang)}

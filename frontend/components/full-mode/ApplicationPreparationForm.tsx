@@ -2,13 +2,13 @@
 
 import { useState, type ReactNode } from 'react'
 import { FileEdit, Landmark, MapPinned, ScanLine, AlertTriangle } from 'lucide-react'
-import { S, g, type Lang } from '@/lib/strings'
+import { S, g } from '@/lib/strings'
 import { DR, drt } from '@/lib/document-readiness/translations'
-import type { RequiredDocumentRef, DocumentType } from '@/lib/document-readiness/types'
+import type { DocLang, RequiredDocumentRef, DocumentType } from '@/lib/document-readiness/types'
 import type { ProfileData } from '@/app/full/page'
 
 interface ApplicationPreparationFormProps {
-  lang: Lang
+  lang: DocLang
   schemeName: string
   requiredDocuments: RequiredDocumentRef[]
   profileData: ProfileData
@@ -25,7 +25,7 @@ function maskAccountDisplay(value: string): string {
   return '•'.repeat(digits.length - 4) + digits.slice(-4)
 }
 
-function validateForm(data: ProfileData, lang: Lang): FieldErrors {
+function validateForm(data: ProfileData, lang: DocLang): FieldErrors {
   const errors: FieldErrors = {}
   const required = g(S.full.validationRequired, lang)
 
