@@ -94,6 +94,19 @@ export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
   return res.json() as Promise<T>
 }
 
+export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+  if (!res.ok) throw new ApiError(res.status, await parseErrorDetail(res))
+  return res.json() as Promise<T>
+}
+
 export async function apiDelete(path: string): Promise<void> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     method: "DELETE",
