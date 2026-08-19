@@ -9,13 +9,24 @@
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1"
 
-// TEMP: replace once real login exists.
+// Real auth token, set by AuthContext after a successful login.
+// Falls back to the old TEMP_JWT only if no real session exists yet —
+// keeps any other code still relying on the temp token working during
+// the transition, without needing to touch it.
 const TEMP_JWT = process.env.NEXT_PUBLIC_TEMP_JWT ?? ""
+let currentAccessToken: string | null = null
+
+export function setAccessToken(token: string | null) {
+  currentAccessToken = token
+}
+
+export function getAccessToken(): string | null {
+  return currentAccessToken
+}
 
 export class ApiError extends Error {
   status: number
   detail: unknown
-
   constructor(status: number, detail: unknown) {
     super(typeof detail === "string" ? detail : `Request failed with status ${status}`)
     this.status = status
@@ -24,8 +35,9 @@ export class ApiError extends Error {
 }
 
 function authHeaders(): HeadersInit {
-  if (!TEMP_JWT) return {}
-  return { Authorization: `Bearer ${TEMP_JWT}` }
+  const token = currentAccessToken || TEMP_JWT
+  if (!token) return {}
+  return { Authorization: `Bearer ${token}` }
 }
 
 async function parseErrorDetail(res: Response): Promise<unknown> {

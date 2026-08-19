@@ -18,6 +18,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 class OTPRequestIn(BaseModel):
     mobile_number: str | None = None
     email: EmailStr | None = None
+    mode: str | None = None  # "login" or "register" — controls existence check
 
     @field_validator("mobile_number")
     @classmethod

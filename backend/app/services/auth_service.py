@@ -46,6 +46,9 @@ from app.core import rate_limit
 from app.services import sms_service
 from app.config import settings
 
+from app.core.exceptions import AccountAlreadyExists, AccountNotFound  # add to existing import line
+
+
 OTP_TTL_MINUTES = 5
 OTP_VERIFY_ATTEMPT_LIMIT = 5   # max wrong guesses against one OTP — enforced here since it's
                                 # scoped to a single OTPRequest row, not shared state across
@@ -56,9 +59,30 @@ OTP_VERIFY_ATTEMPT_LIMIT = 5   # max wrong guesses against one OTP — enforced 
 from app.services import email_service
 
 
-async def request_otp(db: Session, mobile_number: str | None = None, email: str | None = None) -> tuple[uuid.UUID, int]:
+async def request_otp(
+    db: Session,
+    mobile_number: str | None = None,
+    email: str | None = None,
+    mode: str | None = None,
+) -> tuple[uuid.UUID, int]:
     identifier = mobile_number or email
     await rate_limit.enforce_otp_request_limit(identifier)
+
+    # mode distinguishes /login from /register at the request-otp step —
+    # both ultimately call the same verify_otp() underneath (OTP auth
+    # doesn't need a separate signup flow), but the two pages want
+    # different UX: login should refuse to send a code to an email that
+    # was never registered, and register should refuse to re-create an
+    # account that already exists. mode is optional (None) so any older
+    # or third-party caller that doesn't pass it keeps the original
+    # unified behavior.
+    if mode in ("login", "register"):
+        user_filter = User.mobile_number == mobile_number if mobile_number else User.email == email
+        existing_user = db.scalar(select(User).where(user_filter))
+        if mode == "login" and existing_user is None:
+            raise AccountNotFound()
+        if mode == "register" and existing_user is not None:
+            raise AccountAlreadyExists()
 
     code = generate_otp()
     otp_hash = hash_otp(code, identifier)
@@ -87,7 +111,13 @@ async def request_otp(db: Session, mobile_number: str | None = None, email: str 
     return otp_request.id, OTP_TTL_MINUTES * 60
 
 
-def verify_otp(db: Session, code: str, mobile_number: str | None = None, email: str | None = None) -> tuple[User, str, str]:
+def verify_otp(
+    db: Session,
+    code: str,
+    mobile_number: str | None = None,
+    email: str | None = None,
+    full_name: str | None = None,
+) -> tuple[User, str, str]:
     identifier = mobile_number or email
     filter_col = OTPRequest.mobile_number if mobile_number else OTPRequest.email
 
