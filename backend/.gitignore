@@ -39,3 +39,7 @@ alembic/versions/__pycache__/
 *.bin
 *.safetensors
 app/ingestion/_debug_dumps/
+
+schemes_dump.sql
+dev.log
+tsconfig.tsbuildinfo
