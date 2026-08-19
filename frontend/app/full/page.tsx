@@ -16,6 +16,8 @@ import { NameConsistencyCard } from '@/components/document-readiness/NameConsist
 import { ReadinessSummary } from '@/components/document-readiness/ReadinessSummary'
 import { ApplicationPreparationForm } from '@/components/full-mode/ApplicationPreparationForm'
 import { FileCheck2, Trash2 } from 'lucide-react'
+import { apiPatch, apiPut, ApiError } from "@/lib/api-client"
+import { toUserPatchPayload, toProfilePutPayload } from "@/lib/profile-mapping"
 
 type ActivePanel = 'schemes' | 'compare' | 'prep' | 'tracker' | 'csc' | 'helpline'
 type EligibilityStatus = 'eligible' | 'partial' | 'ineligible'
@@ -1795,10 +1797,17 @@ Place: ${profileData.state}`
               profileData={profileData}
               onFieldChange={updateProfile}
               onBack={() => setShowProfileForm(false)}
-              onSubmit={() => {
+              onSubmit={async () => {
+              try {
+                await apiPatch("/users/me", toUserPatchPayload(profileData))
+                await apiPut("/users/me/profile", toProfilePutPayload(profileData))
                 setHasProfile(true)
                 setShowProfileForm(false)
-              }}
+              } catch (err) {
+                const message = err instanceof ApiError ? String(err.message) : "Could not save your profile. Please try again."
+                alert(message)
+              }
+            }}
             />
           )}
 
