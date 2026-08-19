@@ -1,12 +1,12 @@
 'use client'
 
 import { CheckCircle2, AlertTriangle, XCircle } from 'lucide-react'
-import type { Lang } from '@/lib/strings'
+import type { DocLang } from '@/lib/document-readiness/types'
 import type { ReadinessScoreOutput } from '@/lib/document-readiness/readiness-score'
 import { DR, drt } from '@/lib/document-readiness/translations'
 
 interface ReadinessSummaryProps {
-  lang: Lang
+  lang: DocLang
   score: ReadinessScoreOutput
   compact?: boolean
 }

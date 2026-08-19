@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { ScanLine } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import type { DocumentReadinessResult, DocumentType, NameComparison } from '@/lib/document-readiness/types';
+import type { DocLang as DocCheckLang, DocumentReadinessResult, DocumentType, NameComparison } from '@/lib/document-readiness/types';
 import { DR, drt } from '@/lib/document-readiness/translations';
 import { compareNames } from '@/lib/document-readiness/name-matching';
 import { DocumentReadinessCheck } from '@/components/document-readiness/DocumentReadinessCheck';
@@ -16,7 +16,6 @@ import { transcribeAudio, type VoiceLanguage } from '@/lib/voice';
 import { ApiError } from '@/lib/api-client';
 import { synthesizeSpeech } from '@/lib/tts';
 import { searchSchemesFromVoiceText, type RealSchemeMatch, type ParsedVoiceProfile } from '@/lib/scheme-voice-search';
-import type { Lang as DocCheckLang } from '@/lib/strings';
 
 // The document-readiness subsystem (drt/DR, NameConsistencyCard, ReadinessSummary,
 // DocumentReadinessCheck) has its own separate translation dictionary scoped to

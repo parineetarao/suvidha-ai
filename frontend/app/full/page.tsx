@@ -642,7 +642,13 @@ function FullModePageContent() {
   const [trackerFilter, setTrackerFilter] = useState('all')
   const [isListening, setIsListening] = useState(false)
   const [sortBy, setSortBy] = useState('match')
-  const [lang, setLang] = useState<Lang>('en-IN')
+  // Full Mode's own selector only ever offers these 3 (see the <select>
+  // below) — narrower than the app-wide Lang (10 codes, as of the landing
+  // page i18n expansion) on purpose, since it flows into the
+  // document-readiness subsystem's DocLang-typed props, which are still
+  // Hindi/Marathi/English only by design. A narrower type here is safely
+  // assignable everywhere the wider Lang is expected (g/gf calls below).
+  const [lang, setLang] = useState<'hi-IN' | 'mr-IN' | 'en-IN'>('en-IN')
 
   // Profile state
   const [hasProfile, setHasProfile] = useState(false)
@@ -1095,7 +1101,7 @@ Place: ${profileData.state}`
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <select
               value={lang}
-              onChange={(e) => setLang(e.target.value as Lang)}
+              onChange={(e) => setLang(e.target.value as 'hi-IN' | 'mr-IN' | 'en-IN')}
               style={{ fontSize: '10px', fontWeight: 700, border: '1px solid #E7E0D8', borderRadius: '5px', padding: '4px 8px', background: 'white', cursor: 'pointer', outline: 'none', color: '#1C1917' }}
             >
               <option value="hi-IN">हिंदी</option>

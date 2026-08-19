@@ -1,12 +1,12 @@
-import type { Lang } from '@/lib/strings'
+import type { DocLang } from '@/lib/document-readiness/types'
 
-type Dict = Record<Lang, string>
-type DictFn = Record<Lang, (n: string | number) => string>
+type Dict = Record<DocLang, string>
+type DictFn = Record<DocLang, (n: string | number) => string>
 
-function pick(d: Dict, lang: Lang): string {
+function pick(d: Dict, lang: DocLang): string {
   return d[lang] ?? d['en-IN'] ?? ''
 }
-function pickFn(d: DictFn, lang: Lang, arg: string | number): string {
+function pickFn(d: DictFn, lang: DocLang, arg: string | number): string {
   const fn = d[lang] ?? d['en-IN']
   return fn ? fn(arg) : ''
 }
@@ -334,9 +334,9 @@ export const DR = {
   },
 } as const
 
-export function drt(dict: Dict, lang: Lang): string {
+export function drt(dict: Dict, lang: DocLang): string {
   return pick(dict, lang)
 }
-export function drtf(dict: DictFn, lang: Lang, arg: string | number): string {
+export function drtf(dict: DictFn, lang: DocLang, arg: string | number): string {
   return pickFn(dict, lang, arg)
 }
