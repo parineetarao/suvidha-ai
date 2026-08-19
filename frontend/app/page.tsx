@@ -72,17 +72,7 @@ export default function SuvidhaAILanding() {
   const [searchInput, setSearchInput] = useState('');
   const [showHelpModal, setShowHelpModal] = useState(false);
 
-  const { isAuthenticated, isLoading } = useAuth();
-
-  useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      router.replace('/login');
-    }
-  }, [isLoading, isAuthenticated, router]);
-
-  if (isLoading || !isAuthenticated) {
-    return null;
-  }
+  const { isAuthenticated } = useAuth();
 
   const languages: { code: Lang; label: string }[] = [
     { code: 'en-IN', label: 'English' },
@@ -149,7 +139,24 @@ export default function SuvidhaAILanding() {
               </option>
             ))}
           </select>
-                    <AuthStatus />
+                    {isAuthenticated ? (
+                        <AuthStatus />
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <Link
+                            href="/login"
+                            className="text-[#1A6B3C] text-[12px] font-semibold rounded-[5px] px-3 py-2 border border-[#1A6B3C] hover:bg-[#F0FDF4] transition-colors whitespace-nowrap"
+                          >
+                            Log in
+                          </Link>
+                          <Link
+                            href="/register"
+                            className="bg-[#1A6B3C] text-white text-[12px] rounded-[5px] px-3 sm:px-[18px] py-2 hover:bg-[#155032] transition-colors whitespace-nowrap"
+                          >
+                            Register
+                          </Link>
+                        </div>
+                      )}
         </div>
       </nav>
 
