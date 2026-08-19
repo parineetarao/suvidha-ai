@@ -30,6 +30,8 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     restart: unless-stopped
+    volumes:
+      - ../alembic:/app/alembic
     env_file:
       - ../.env
     environment:
@@ -37,6 +39,10 @@ services:
       REDIS_URL: redis://redis:6379/0
     ports:
       - "8000:8000"
+    volumes:
+      - ../alembic:/app/alembic
+      - ../app:/app/app
+      - ../templates:/app/templates
     depends_on:
       postgres:
         condition: service_healthy

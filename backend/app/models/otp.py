@@ -30,7 +30,8 @@ class OTPRequest(Base):
     # table has to work for both "new user verifying for the first time"
     # and "existing user logging in again," so it keys off the raw mobile
     # number rather than assuming a User already exists.
-    mobile_number: Mapped[str] = mapped_column(String(15))
+    mobile_number: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # sha256 hex digest is always 64 characters — 128 is generous headroom,
     # matching the column size used for refresh_tokens.token_hash so the
@@ -63,5 +64,6 @@ class OTPRequest(Base):
     # still need to filter/sort on expires_at afterward; the composite index
     # lets Postgres satisfy both conditions from the index itself.
     __table_args__ = (
-        Index("ix_otp_requests_mobile_expiry", "mobile_number", "expires_at"),
-    )
+    Index("ix_otp_requests_mobile_expiry", "mobile_number", "expires_at"),
+    Index("ix_otp_requests_email_expiry", "email", "expires_at"),
+)
