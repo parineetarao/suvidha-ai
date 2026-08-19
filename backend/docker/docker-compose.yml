@@ -30,12 +30,11 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     restart: unless-stopped
-    volumes:
-      - ../alembic:/app/alembic
     env_file:
       - ../.env
     environment:
       POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
       REDIS_URL: redis://redis:6379/0
     ports:
       - "8000:8000"

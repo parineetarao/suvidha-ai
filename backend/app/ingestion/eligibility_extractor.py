@@ -42,7 +42,7 @@ load_dotenv()  # .env isn't read into os.environ automatically — this is what 
 
 logger = logging.getLogger(__name__)
 
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_RATE_LIMIT_SECONDS = 2.5  # keeps well under Groq's free-tier ~30 requests/minute cap
 
 TARGET_FIELDS = ["min_age", "max_age", "gender", "categories", "income_max", "occupations", "states"]
