@@ -46,6 +46,9 @@ from app.core import rate_limit
 from app.services import sms_service
 from app.config import settings
 
+from app.core.exceptions import AccountAlreadyExists, AccountNotFound  # add to existing import line
+
+
 OTP_TTL_MINUTES = 5
 OTP_VERIFY_ATTEMPT_LIMIT = 5   # max wrong guesses against one OTP — enforced here since it's
                                 # scoped to a single OTPRequest row, not shared state across
@@ -53,113 +56,109 @@ OTP_VERIFY_ATTEMPT_LIMIT = 5   # max wrong guesses against one OTP — enforced 
                                 # core/rate_limit.py since IT needs Redis's atomicity.
 
 
-async def request_otp(db: Session, mobile_number: str) -> tuple[uuid.UUID, int]:
-    """
-    Step 1 of the flow: generate an OTP, store its hash, send it via SMS.
-    Returns (request_id, expires_in_seconds) for the API layer to return
-    to the client as OTPRequestOut.
-    """
-    await rate_limit.enforce_otp_request_limit(mobile_number)
+from app.services import email_service
+
+
+async def request_otp(
+    db: Session,
+    mobile_number: str | None = None,
+    email: str | None = None,
+    mode: str | None = None,
+) -> tuple[uuid.UUID, int]:
+    identifier = mobile_number or email
+    await rate_limit.enforce_otp_request_limit(identifier)
+
+    # mode distinguishes /login from /register at the request-otp step —
+    # both ultimately call the same verify_otp() underneath (OTP auth
+    # doesn't need a separate signup flow), but the two pages want
+    # different UX: login should refuse to send a code to an email that
+    # was never registered, and register should refuse to re-create an
+    # account that already exists. mode is optional (None) so any older
+    # or third-party caller that doesn't pass it keeps the original
+    # unified behavior.
+    if mode in ("login", "register"):
+        user_filter = User.mobile_number == mobile_number if mobile_number else User.email == email
+        existing_user = db.scalar(select(User).where(user_filter))
+        if mode == "login" and existing_user is None:
+            raise AccountNotFound()
+        if mode == "register" and existing_user is not None:
+            raise AccountAlreadyExists()
 
     code = generate_otp()
-    otp_hash = hash_otp(code, mobile_number)
+    otp_hash = hash_otp(code, identifier)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=OTP_TTL_MINUTES)
 
     otp_request = OTPRequest(
         mobile_number=mobile_number,
+        email=email,
         otp_hash=otp_hash,
         expires_at=expires_at,
     )
     db.add(otp_request)
-    db.flush()  # assigns otp_request.id without fully committing yet
+    db.flush()
 
     try:
-        await sms_service.send_otp(mobile_number, code)
-    except sms_service.SMSDeliveryError as exc:
-        # If the SMS never went out, the OTP is useless — roll back the row
-        # we just created rather than leaving an orphaned, un-deliverable
-        # OTPRequest sitting in the table. This is the concrete answer to
-        # "what if MSG91 is down": the client gets a clear 503, not a
-        # silent OTP they can never receive.
+        if email:
+            await email_service.send_otp_email(email, code)
+        else:
+            await sms_service.send_otp(mobile_number, code)
+    except (sms_service.SMSDeliveryError, email_service.EmailDeliveryError) as exc:
         db.rollback()
         raise OTPDeliveryFailed() from exc
 
     db.commit()
     db.refresh(otp_request)
-
     return otp_request.id, OTP_TTL_MINUTES * 60
 
 
-def verify_otp(db: Session, mobile_number: str, code: str) -> tuple[User, str, str]:
-    """
-    Step 2 of the flow: check the submitted code against the most recent
-    unexpired, unconsumed OTP request for this mobile number. On success,
-    creates the User if this is their first login, issues an access token
-    and a refresh token.
+def verify_otp(
+    db: Session,
+    code: str,
+    mobile_number: str | None = None,
+    email: str | None = None,
+    full_name: str | None = None,
+) -> tuple[User, str, str]:
+    identifier = mobile_number or email
+    filter_col = OTPRequest.mobile_number if mobile_number else OTPRequest.email
 
-    Returns (user, access_token, raw_refresh_token). The raw refresh token
-    is what the API layer sets as an httpOnly cookie — never returned in
-    a JSON body (see TokenPair's docstring for why).
-    """
     otp_request = db.scalar(
         select(OTPRequest)
-        .where(OTPRequest.mobile_number == mobile_number, OTPRequest.consumed == False)  # noqa: E712
+        .where(filter_col == identifier, OTPRequest.consumed == False)  # noqa: E712
         .order_by(OTPRequest.created_at.desc())
     )
 
     if otp_request is None:
-        # No pending OTP at all for this number — either they never
-        # requested one, or a previous one was already consumed. Same
-        # error as "wrong code" deliberately: telling an attacker
-        # specifically WHY verification failed (no request vs wrong code
-        # vs expired) leaks information about what state the system is in
-        # for a given mobile number. InvalidCredentials's generic message
-        # is the safer default for this specific failure.
         raise InvalidCredentials()
-
     if otp_request.expires_at < datetime.now(timezone.utc):
         raise OTPExpired()
-
     if otp_request.attempts >= OTP_VERIFY_ATTEMPT_LIMIT:
         raise TooManyAttempts("Too many incorrect attempts for this OTP. Please request a new one.")
 
-    submitted_hash = hash_otp(code, mobile_number)
+    submitted_hash = hash_otp(code, identifier)
     if submitted_hash != otp_request.otp_hash:
-        # Wrong code: increment attempts and commit immediately, BEFORE
-        # raising. If we raised first, the caller's transaction might
-        # roll back and this increment would be lost — meaning a
-        # network-interrupted wrong guess wouldn't count against the
-        # attempt limit. Committing the failed attempt first closes that
-        # gap; the brute-force counter must survive even if everything
-        # after it fails.
         otp_request.attempts += 1
         db.commit()
         raise InvalidCredentials()
 
-    # Correct code: mark this OTP as spent so it can never be reused,
-    # even if it hasn't technically expired yet.
     otp_request.consumed = True
 
-    user = db.scalar(select(User).where(User.mobile_number == mobile_number))
+    user_filter = User.mobile_number == mobile_number if mobile_number else User.email == email
+    user = db.scalar(select(User).where(user_filter))
     if user is None:
-        # First-ever successful verification for this number: this is
-        # signup and login collapsed into a single flow, which is the
-        # standard pattern for OTP-based auth — there's no separate
-        # "create account" step for the citizen to go through.
-        user = User(mobile_number=mobile_number, is_verified=True)
+        # New account — full_name only applies here, at creation.
+        # Ignored on an existing user's login to avoid a login accidentally
+        # overwriting a name the user already set via their profile.
+        user = User(mobile_number=mobile_number, email=email, full_name=full_name, is_verified=True)
         db.add(user)
-        db.flush()  # need user.id before creating the refresh token below
+        db.flush()
 
     user.last_login_at = datetime.now(timezone.utc)
-
     access_token = create_access_token(str(user.id), roles=["user"])
     raw_refresh_token = _issue_refresh_token(db, user.id)
 
     db.commit()
     db.refresh(user)
-
     return user, access_token, raw_refresh_token
-
 
 def refresh_access_token(db: Session, raw_refresh_token: str) -> tuple[str, str]:
     """

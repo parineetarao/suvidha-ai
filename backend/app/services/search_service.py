@@ -69,7 +69,7 @@ class SearchService:
             self._vectorizer = None
             return
 
-        corpus = [f"{s.name} {s.description or ''}" for s in schemes]
+        corpus = [f"{s.name} {s.description or ''} {s.eligibility_text or ''}" for s in schemes]
         self._vectorizer = TfidfVectorizer()
         self._tfidf_matrix = self._vectorizer.fit_transform(corpus)
         self._scheme_codes = [s.scheme_code for s in schemes]

@@ -61,7 +61,7 @@ def ingest_scheme(db, slug: str) -> bool:
     # tags from the page (not a model field) get folded into the text we
     # embed, so search can match on them even though there's no dedicated column
     tags_text = " ".join(scraped.get("tags", []))
-    text_to_embed = f"{scraped['name']}. {scraped.get('description', '')} {tags_text}"
+    text_to_embed = f"{scraped['name']}. {scraped.get('description', '')} {scraped.get('eligibility_text', '')} {tags_text}"
     embedding = None
     if embedding_service.is_ready:
         embedding = embedding_service.encode(text_to_embed)

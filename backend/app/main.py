@@ -1,3 +1,10 @@
+# Import app.db.base FIRST, before any router — routers import models,
+# and models import Base from this file. If a router imports a model
+# before base.py has been loaded standalone, base.py's own model imports
+# collide with the still-initializing model, causing a circular import.
+# Same fix pattern used in scripts/create_admin.py and api/deps.py.
+import app.db.base  # noqa: F401
+
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -10,6 +17,18 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import engine
+# Must run before any router import below. Routers import model modules
+# directly (e.g. app.api.v1.schemes -> app.models.scheme), and every model
+# module does `from app.db.base import Base`. app/db/base.py defines Base
+# and then imports all model modules itself, in a safe fixed order — but
+# only if it's the first thing to touch either side of that cycle. If a
+# model module gets imported first instead, it starts importing app.db.base
+# mid-way through its own definition, which imports that same model module
+# back (already partially in sys.modules) and fails to find the class that
+# hasn't been defined yet. Importing app.db.base explicitly here, first,
+# sidesteps that ordering trap regardless of which router happens to be
+# listed next.
+import app.db.base  # noqa: E402, F401
 from app.api.v1.schemes import router as schemes_router
 from app.services.embedding_service import embedding_service
 

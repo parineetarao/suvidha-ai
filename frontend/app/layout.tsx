@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Libre_Baskerville, Mukta } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import './globals.css'
+import { AuthProvider } from "@/lib/auth-context"
 
 const libreBaskerville = Libre_Baskerville({
   weight: ['400', '700'],
@@ -47,7 +48,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${libreBaskerville.variable} ${mukta.variable}`}>
       <body className="font-mukta antialiased">
-        {children}
+        <AuthProvider>
+          {children}
+        </AuthProvider>
         <Analytics />
       </body>
     </html>

@@ -1,5 +1,7 @@
 'use client';
-
+import { useEffect } from "react"
+import { useAuth } from "@/lib/auth-context"
+import AuthStatus from "@/components/AuthStatus"
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -70,6 +72,18 @@ export default function SuvidhaAILanding() {
   const [searchInput, setSearchInput] = useState('');
   const [showHelpModal, setShowHelpModal] = useState(false);
 
+  const { isAuthenticated, isLoading } = useAuth();
+
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      router.replace('/login');
+    }
+  }, [isLoading, isAuthenticated, router]);
+
+  if (isLoading || !isAuthenticated) {
+    return null;
+  }
+
   const languages: { code: Lang; label: string }[] = [
     { code: 'en-IN', label: 'English' },
     { code: 'hi-IN', label: 'हिंदी' },
@@ -135,9 +149,7 @@ export default function SuvidhaAILanding() {
               </option>
             ))}
           </select>
-          <button className="bg-[#1A6B3C] text-white text-[12px] rounded-[5px] px-3 sm:px-[18px] py-2 hover:bg-[#155032] transition-colors whitespace-nowrap">
-            {g(S.landing.login, lang)}
-          </button>
+                    <AuthStatus />
         </div>
       </nav>
 

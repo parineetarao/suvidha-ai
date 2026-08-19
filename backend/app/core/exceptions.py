@@ -92,3 +92,13 @@ class ApplicationNotFound(HTTPException):
 
     def __init__(self, detail: str = "Application not found."):
         super().__init__(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+
+
+class AccountNotFound(HTTPException):
+    def __init__(self, detail: str = "No account found with this email. Please register."):
+        super().__init__(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+
+
+class AccountAlreadyExists(HTTPException):
+    def __init__(self, detail: str = "An account already exists with this email. Please log in."):
+        super().__init__(status_code=status.HTTP_409_CONFLICT, detail=detail)

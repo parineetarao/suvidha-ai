@@ -28,6 +28,7 @@ pytest==8.3.4
 pytest-asyncio==0.25.0
 httpx==0.28.1
 
+email-validator
 sentence-transformers
 scikit-learn
 numpy
@@ -46,3 +47,4 @@ requests==2.32.3
 # Voice output (Member 3) — server-side TTS so audio works for every
 # language regardless of what voices are installed on the listener's OS
 gTTS==2.5.4
+gtts
