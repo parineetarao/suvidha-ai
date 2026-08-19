@@ -1,12 +1,11 @@
 'use client'
 
 import { AlertTriangle } from 'lucide-react'
-import type { Lang } from '@/lib/strings'
-import type { NameComparison, DocumentType } from '@/lib/document-readiness/types'
+import type { DocLang, NameComparison, DocumentType } from '@/lib/document-readiness/types'
 import { DR, drt } from '@/lib/document-readiness/translations'
 
 interface NameConsistencyCardProps {
-  lang: Lang
+  lang: DocLang
   profileName: string
   comparisons: NameComparison[]
   compact?: boolean

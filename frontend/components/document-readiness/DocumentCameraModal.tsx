@@ -2,14 +2,14 @@
 
 import { useRef } from 'react'
 import { Camera, Upload } from 'lucide-react'
-import type { Lang } from '@/lib/strings'
+import type { DocLang } from '@/lib/document-readiness/types'
 import { DR, drt } from '@/lib/document-readiness/translations'
 
 const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp']
 const MAX_FILE_BYTES = 10 * 1024 * 1024
 
 interface DocumentCameraModalProps {
-  lang: Lang
+  lang: DocLang
   disabled?: boolean
   inputIdPrefix: string
   onFile: (file: File) => void

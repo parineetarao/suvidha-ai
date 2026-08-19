@@ -1,7 +1,7 @@
-import type { Lang } from '@/lib/strings'
+import type { DocLang } from '@/lib/document-readiness/types'
 
 /** Mirrors the speech-synthesis approach already used in Simple Mode (cancel-then-speak). */
-export function speakText(text: string, lang: Lang): void {
+export function speakText(text: string, lang: DocLang): void {
   if (typeof window === 'undefined' || !window.speechSynthesis) return
   window.speechSynthesis.cancel()
   const utterance = new SpeechSynthesisUtterance(text)

@@ -1,12 +1,12 @@
 'use client'
 
 import { FlaskConical } from 'lucide-react'
-import type { Lang } from '@/lib/strings'
+import type { DocLang } from '@/lib/document-readiness/types'
 import { DR, drt } from '@/lib/document-readiness/translations'
 import { DEMO_SCENARIOS, type DemoScenario } from '@/lib/document-readiness/demo-data'
 
 interface DemoScenarioPickerProps {
-  lang: Lang
+  lang: DocLang
   onPick: (scenario: DemoScenario) => void
 }
 

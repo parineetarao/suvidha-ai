@@ -1,8 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import type { Lang } from '@/lib/strings'
-import type { DocumentIssue, DocumentReadinessResult, DocumentType, OCRStageUpdate } from '@/lib/document-readiness/types'
+import type { DocLang, DocumentIssue, DocumentReadinessResult, DocumentType, OCRStageUpdate } from '@/lib/document-readiness/types'
 import { DR, drt } from '@/lib/document-readiness/translations'
 import { runOcr } from '@/lib/document-readiness/ocr'
 import { assessImageQuality, loadImageBitmapFromFile } from '@/lib/document-readiness/image-quality'
@@ -17,7 +16,7 @@ import { PrivacyNotice } from './PrivacyNotice'
 import { DemoScenarioPicker } from './DemoScenarioPicker'
 
 interface DocumentReadinessCheckProps {
-  lang: Lang
+  lang: DocLang
   documentType: DocumentType
   displayLabel: string
   expectedProfileName?: string

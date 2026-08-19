@@ -1,4 +1,9 @@
-import type { Lang } from '@/lib/strings'
+// Deliberately its own 3-value type, not app-wide Lang from '@/lib/strings'
+// (which now spans 10 languages after the landing-page i18n expansion).
+// This subsystem's translations are Hindi/Marathi/English only by design —
+// see app/simple/page.tsx's toDocCheckLang, which maps any of the 10 UI
+// languages down to one of these 3 before calling into this subsystem.
+export type DocLang = 'hi-IN' | 'mr-IN' | 'en-IN'
 
 export type DocumentType =
   | 'aadhaar'
@@ -105,4 +110,3 @@ export interface StoredDocumentReadiness {
   readinessScore?: number
 }
 
-export type { Lang }
