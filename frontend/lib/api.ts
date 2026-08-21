@@ -11,7 +11,11 @@
  * logged-in user with a saved profile and is still unverified end-to-end.
  */
 
-export const API_BASE_URL = 'http://localhost:8001/api/v1';
+// Was hardcoded to a stale port (8001) independent of every other API
+// client in the app — reuse the same NEXT_PUBLIC_API_URL env var that
+// api-client.ts and tts.ts already read, so there's one source of truth
+// for the backend URL instead of two that can drift out of sync.
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
 
 export type ApiLanguage = 'en' | 'hi' | 'mr' | 'ta' | 'te' | 'kn' | 'ml' | 'bn' | 'gu' | 'pa';
 
@@ -91,7 +95,7 @@ async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
     res = await fetch(input, init);
   } catch (err) {
     throw new ApiError(
-      'Could not reach the backend at ' + API_BASE_URL + '. Is it running on localhost:8001?'
+      'Could not reach the backend at ' + API_BASE_URL + '. Is it running?'
     );
   }
   if (!res.ok) {
@@ -99,6 +103,36 @@ async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
     throw new ApiError(detail, res.status);
   }
   return res;
+}
+
+export type SchemeOut = {
+  id: string;
+  scheme_code: string;
+  name: string;
+  ministry: string | null;
+  category: string | null;
+  is_published: boolean;
+};
+
+export type PaginatedSchemes = {
+  items: SchemeOut[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
+// GET /schemes/{id} (getScheme, below) looks a scheme up by scheme_code,
+// not by its real `id` UUID — but Application.scheme_id (Member 3's table)
+// stores that UUID, not the scheme_code. There's no id-keyed detail
+// endpoint, so resolving an application's scheme_id back to a display name
+// goes through the list endpoint instead, which does return `id` alongside
+// `name`. English-only (list_schemes doesn't take a `lang` param), and
+// caps at 100 schemes (currently 62 published) — acceptable for a name
+// lookup, not attempting to fix the underlying route mismatch here since
+// schemes.py isn't mine to change.
+export async function listSchemes(limit = 100): Promise<PaginatedSchemes> {
+  const res = await apiFetch(`${API_BASE_URL}/schemes?limit=${limit}`);
+  return res.json();
 }
 
 export async function searchSchemes(

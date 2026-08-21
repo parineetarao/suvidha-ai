@@ -5,7 +5,7 @@
 // bundle doesn't have to define every language to type-check.
 export type Lang = 'hi-IN' | 'mr-IN' | 'en-IN' | 'ta-IN' | 'te-IN' | 'kn-IN' | 'ml-IN' | 'bn-IN' | 'gu-IN' | 'pa-IN'
 
-type Str = Partial<Record<Lang, string>>
+export type Str = Partial<Record<Lang, string>>
 type StrFn1 = Partial<Record<Lang, (a: string | number) => string>>
 
 function pick<T>(obj: Partial<Record<Lang, T>>, lang: Lang): T {
@@ -28,6 +28,8 @@ export const S = {
   full: {
     brandTag: { 'hi-IN': 'सरकारी योजना खोजक', 'mr-IN': 'सरकारी योजना शोधक', 'en-IN': 'GOVERNMENT SCHEME FINDER' } as Str,
     farmerMaharashtra: { 'hi-IN': 'किसान · महाराष्ट्र', 'mr-IN': 'शेतकरी · महाराष्ट्र', 'en-IN': 'Farmer · Maharashtra' } as Str,
+    guestUser: { 'hi-IN': 'अतिथि उपयोगकर्ता', 'mr-IN': 'अतिथी वापरकर्ता', 'en-IN': 'Guest User' } as Str,
+    notLoggedIn: { 'hi-IN': 'लॉग इन नहीं है', 'mr-IN': 'लॉग इन केलेले नाही', 'en-IN': 'Not logged in' } as Str,
 
     navSchemes: { 'hi-IN': 'योजना खोज', 'mr-IN': 'योजना शोध', 'en-IN': 'Scheme Search' } as Str,
     navCompare: { 'hi-IN': 'योजनाओं की तुलना', 'mr-IN': 'योजनांची तुलना', 'en-IN': 'Compare Schemes' } as Str,
@@ -40,6 +42,16 @@ export const S = {
     searchLabel: { 'hi-IN': 'अपनी स्थिति बताएं', 'mr-IN': 'तुमची परिस्थिती सांगा', 'en-IN': 'Describe Your Situation' } as Str,
     searchPlaceholder: { 'hi-IN': 'मैं 45 साल का किसान हूँ...', 'mr-IN': 'मी 45 वर्षांचा शेतकरी आहे...', 'en-IN': 'I am a 45 year old farmer from Maharashtra...' } as Str,
     searchBtn: { 'hi-IN': 'खोजें', 'mr-IN': 'शोधा', 'en-IN': 'Search' } as Str,
+    // Voice input errors — same wording as Simple Mode's uiStrings (voice
+    // handling should read as one product), authored hi/mr/en to match the
+    // rest of S.full's scope; g()'s own obj['en-IN'] fallback covers the
+    // other 7 languages, same as every other S.full string already does.
+    voiceListening: { 'hi-IN': 'सुन रहा हूँ...', 'mr-IN': 'ऐकत आहे...', 'en-IN': 'Listening...' } as Str,
+    voiceProcessing: { 'hi-IN': 'समझ रहा हूँ...', 'mr-IN': 'समजून घेत आहे...', 'en-IN': 'Understanding...' } as Str,
+    voiceMicError: { 'hi-IN': 'माइक्रोफ़ोन एक्सेस नहीं मिला। कृपया अनुमति दें और फिर कोशिश करें।', 'mr-IN': 'मायक्रोफोन अ‍ॅक्सेस मिळाला नाही. कृपया परवानगी द्या आणि पुन्हा प्रयत्न करा.', 'en-IN': 'Microphone access denied. Please allow microphone access and try again.' } as Str,
+    voiceEmptyError: { 'hi-IN': 'कुछ सुनाई नहीं दिया। कृपया दोबारा बोलें।', 'mr-IN': 'काही ऐकू आले नाही. कृपया पुन्हा बोला.', 'en-IN': 'Could not understand the audio. Please try again.' } as Str,
+    voiceTranscribeError: { 'hi-IN': 'आवाज़ को समझने में समस्या हुई। कृपया दोबारा कोशिश करें।', 'mr-IN': 'आवाज समजण्यात अडचण आली. कृपया पुन्हा प्रयत्न करा.', 'en-IN': 'Could not transcribe audio. Please try again.' } as Str,
+    voiceSessionExpiredError: { 'hi-IN': 'आपका सत्र समाप्त हो गया है। कृपया दोबारा लॉगिन करें।', 'mr-IN': 'तुमचे सत्र संपले आहे. कृपया पुन्हा लॉगिन करा.', 'en-IN': 'Your session expired. Please log in again.' } as Str,
     showingAll: { 'hi-IN': (n) => `सभी ${n} योजनाएं दिखाई जा रही हैं`, 'mr-IN': (n) => `सर्व ${n} योजना दाखवत आहे`, 'en-IN': (n) => `Showing all ${n} schemes` } as StrFn1,
     schemesFound: { 'hi-IN': (n) => `${n} योजनाएं मिलीं`, 'mr-IN': (n) => `${n} योजना सापडल्या`, 'en-IN': (n) => `${n} schemes found` } as StrFn1,
     filterState: { 'hi-IN': 'राज्य: महाराष्ट्र', 'mr-IN': 'राज्य: महाराष्ट्र', 'en-IN': 'State: Maharashtra' } as Str,
@@ -114,6 +126,14 @@ export const S = {
     mediumRisk: { 'hi-IN': 'मध्यम', 'mr-IN': 'मध्यम', 'en-IN': 'Medium' } as Str,
     highRisk: { 'hi-IN': 'उच्च', 'mr-IN': 'उच्च', 'en-IN': 'High' } as Str,
 
+    // Application-backend status (POST /applications) — authored for all 10
+    // languages even though the rest of S.full is only hi/mr/en, since these
+    // are new additions and every new string must cover all 10.
+    applicationCreating: { 'en-IN': 'Starting your application…', 'hi-IN': 'आवेदन शुरू किया जा रहा है...', 'mr-IN': 'अर्ज सुरू केला जात आहे...', 'ta-IN': 'உங்கள் விண்ணப்பம் தொடங்கப்படுகிறது...', 'te-IN': 'మీ దరఖాస్తు ప్రారంభించబడుతోంది...', 'kn-IN': 'ನಿಮ್ಮ ಅರ್ಜಿಯನ್ನು ಪ್ರಾರಂಭಿಸಲಾಗುತ್ತಿದೆ...', 'ml-IN': 'നിങ്ങളുടെ അപേക്ഷ ആരംഭിക്കുന്നു...', 'bn-IN': 'আপনার আবেদন শুরু করা হচ্ছে...', 'gu-IN': 'તમારી અરજી શરૂ કરવામાં આવી રહી છે...', 'pa-IN': 'ਤੁਹਾਡੀ ਅਰਜ਼ੀ ਸ਼ੁਰੂ ਕੀਤੀ ਜਾ ਰਹੀ ਹੈ...' } as Str,
+    applicationStarted: { 'en-IN': '✓ Application started — track it in Application Tracker', 'hi-IN': '✓ आवेदन शुरू किया गया — इसे आवेदन ट्रैकर में देखें', 'mr-IN': '✓ अर्ज सुरू केला — तो अर्ज ट्रॅकरमध्ये पहा', 'ta-IN': '✓ விண்ணப்பம் தொடங்கப்பட்டது — விண்ணப்ப டிராக்கரில் பாருங்கள்', 'te-IN': '✓ దరఖాస్తు ప్రారంభమైంది — దీన్ని అప్లికేషన్ ట్రాకర్‌లో చూడండి', 'kn-IN': '✓ ಅರ್ಜಿ ಪ್ರಾರಂಭವಾಗಿದೆ — ಇದನ್ನು ಅಪ್ಲಿಕೇಶನ್ ಟ್ರ್ಯಾಕರ್‌ನಲ್ಲಿ ನೋಡಿ', 'ml-IN': '✓ അപേക്ഷ ആരംഭിച്ചു — ഇത് അപ്ലിക്കേഷൻ ട്രാക്കറിൽ കാണുക', 'bn-IN': '✓ আবেদন শুরু হয়েছে — অ্যাপ্লিকেশন ট্র্যাকারে দেখুন', 'gu-IN': '✓ અરજી શરૂ થઈ — તેને એપ્લિકેશન ટ્રેકરમાં જુઓ', 'pa-IN': '✓ ਅਰਜ਼ੀ ਸ਼ੁਰੂ ਹੋ ਗਈ — ਇਸਨੂੰ ਐਪਲੀਕੇਸ਼ਨ ਟ੍ਰੈਕਰ ਵਿੱਚ ਦੇਖੋ' } as Str,
+    applicationExists: { 'en-IN': 'You already started an application for this scheme', 'hi-IN': 'आप पहले ही इस योजना के लिए आवेदन शुरू कर चुके हैं', 'mr-IN': 'तुम्ही आधीच या योजनेसाठी अर्ज सुरू केला आहे', 'ta-IN': 'இந்தத் திட்டத்திற்கு நீங்கள் ஏற்கனவே விண்ணப்பம் தொடங்கியுள்ளீர்கள்', 'te-IN': 'మీరు ఇప్పటికే ఈ పథకానికి దరఖాస్తు ప్రారంభించారు', 'kn-IN': 'ನೀವು ಈಗಾಗಲೇ ಈ ಯೋಜನೆಗೆ ಅರ್ಜಿ ಪ್ರಾರಂಭಿಸಿದ್ದೀರಿ', 'ml-IN': 'ഈ പദ്ധതിക്ക് നിങ്ങൾ ഇതിനകം അപേക്ഷ ആരംഭിച്ചിട്ടുണ്ട്', 'bn-IN': 'আপনি ইতিমধ্যে এই প্রকল্পের জন্য আবেদন শুরু করেছেন', 'gu-IN': 'તમે પહેલેથી જ આ યોજના માટે અરજી શરૂ કરી છે', 'pa-IN': 'ਤੁਸੀਂ ਪਹਿਲਾਂ ਹੀ ਇਸ ਯੋਜਨਾ ਲਈ ਅਰਜ਼ੀ ਸ਼ੁਰੂ ਕਰ ਚੁੱਕੇ ਹੋ' } as Str,
+    applicationError: { 'en-IN': 'Could not start your application. Please try again.', 'hi-IN': 'आपका आवेदन शुरू नहीं हो सका। कृपया दोबारा कोशिश करें।', 'mr-IN': 'तुमचा अर्ज सुरू करता आला नाही. कृपया पुन्हा प्रयत्न करा.', 'ta-IN': 'உங்கள் விண்ணப்பத்தைத் தொடங்க முடியவில்லை. மீண்டும் முயற்சிக்கவும்.', 'te-IN': 'మీ దరఖాస్తును ప్రారంభించలేకపోయాము. దయచేసి మళ్లీ ప్రయత్నించండి.', 'kn-IN': 'ನಿಮ್ಮ ಅರ್ಜಿಯನ್ನು ಪ್ರಾರಂಭಿಸಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.', 'ml-IN': 'നിങ്ങളുടെ അപേക്ഷ ആരംഭിക്കാൻ കഴിഞ്ഞില്ല. ദയവായി വീണ്ടും ശ്രമിക്കുക.', 'bn-IN': 'আপনার আবেদন শুরু করা যায়নি। অনুগ্রহ করে আবার চেষ্টা করুন।', 'gu-IN': 'તમારી અરજી શરૂ કરી શકાઈ નથી. કૃપા કરી ફરી પ્રયાસ કરો.', 'pa-IN': 'ਤੁਹਾਡੀ ਅਰਜ਼ੀ ਸ਼ੁਰੂ ਨਹੀਂ ਹੋ ਸਕੀ। ਕਿਰਪਾ ਕਰਕੇ ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ।' } as Str,
+
     prepSubHead: { 'hi-IN': 'अपनी जानकारी भरें', 'mr-IN': 'तुमची माहिती भरा', 'en-IN': 'Create Your Profile' } as Str,
     prepSubDesc: { 'hi-IN': 'व्यक्तिगत आवेदन दस्तावेज़ बनाने के लिए हमें आपकी बुनियादी जानकारी चाहिए। इसमें 2 मिनट से कम समय लगेगा।', 'mr-IN': 'वैयक्तिक अर्ज दस्तऐवज तयार करण्यासाठी आम्हाला तुमची मूलभूत माहिती हवी आहे. यासाठी 2 मिनिटांपेक्षा कमी वेळ लागेल.', 'en-IN': 'To generate a personalised application document, we need your basic details. This takes less than 2 minutes.' } as Str,
     weNeed: { 'hi-IN': 'हमें चाहिए: ', 'mr-IN': 'आम्हाला हवे: ', 'en-IN': 'We need: ' } as Str,
@@ -127,6 +147,8 @@ export const S = {
     filterApproved: { 'hi-IN': 'स्वीकृत', 'mr-IN': 'मंजूर', 'en-IN': 'Approved' } as Str,
     filterAction: { 'hi-IN': 'कार्रवाई ज़रूरी', 'mr-IN': 'कृती आवश्यक', 'en-IN': 'Action Needed' } as Str,
     stepApplied: { 'hi-IN': 'आवेदन किया', 'mr-IN': 'अर्ज केला', 'en-IN': 'Applied' } as Str,
+    stepDocsPending: { 'hi-IN': 'दस्तावेज़', 'mr-IN': 'कागदपत्रे', 'en-IN': 'Docs' } as Str,
+    stepLetterGenerated: { 'hi-IN': 'दस्तावेज़ तैयार', 'mr-IN': 'दस्तऐवज तयार', 'en-IN': 'Letter Ready' } as Str,
     stepReview: { 'hi-IN': 'समीक्षा में', 'mr-IN': 'समीक्षेत', 'en-IN': 'Under Review' } as Str,
     stepVerified: { 'hi-IN': 'सत्यापित', 'mr-IN': 'सत्यापित', 'en-IN': 'Verified' } as Str,
     stepDisbursed: { 'hi-IN': 'वितरित', 'mr-IN': 'वितरित', 'en-IN': 'Disbursed' } as Str,
@@ -134,7 +156,22 @@ export const S = {
     statusDocs: { 'hi-IN': '⚠ दस्तावेज़ चाहिए', 'mr-IN': '⚠ कागदपत्रे हवीत', 'en-IN': '⚠ DOCS NEEDED' } as Str,
     statusPending: { 'hi-IN': '⏳ लंबित', 'mr-IN': '⏳ प्रलंबित', 'en-IN': '⏳ PENDING' } as Str,
     statusRejected: { 'hi-IN': '✗ अस्वीकृत', 'mr-IN': '✗ नाकारले', 'en-IN': '✗ REJECTED' } as Str,
+    statusDraft: { 'hi-IN': '📝 ड्राफ्ट', 'mr-IN': '📝 मसुदा', 'en-IN': '📝 DRAFT' } as Str,
+    statusDocsPending: { 'hi-IN': '⚠ दस्तावेज़ चाहिए', 'mr-IN': '⚠ कागदपत्रे हवीत', 'en-IN': '⚠ DOCS NEEDED' } as Str,
+    statusLetterGenerated: { 'hi-IN': '📄 दस्तावेज़ तैयार', 'mr-IN': '📄 दस्तऐवज तयार', 'en-IN': '📄 LETTER READY' } as Str,
+    statusSubmitted: { 'hi-IN': '📨 जमा किया गया', 'mr-IN': '📨 सादर केले', 'en-IN': '📨 SUBMITTED' } as Str,
+    statusUnderReview: { 'hi-IN': '⏳ समीक्षा में', 'mr-IN': '⏳ समीक्षेत', 'en-IN': '⏳ UNDER REVIEW' } as Str,
     noRefYet: { 'hi-IN': 'अभी कोई संदर्भ नंबर नहीं', 'mr-IN': 'अद्याप संदर्भ क्रमांक नाही', 'en-IN': 'No reference number yet' } as Str,
+    trackerEmpty: { 'hi-IN': 'अभी तक कोई आवेदन नहीं। किसी योजना के लिए "आवेदन तैयारी" से शुरू करें।', 'mr-IN': 'अद्याप कोणताही अर्ज नाही. एखाद्या योजनेसाठी "अर्ज तयारी" मधून सुरुवात करा.', 'en-IN': 'No applications yet. Start one from Application Preparation for any scheme.' } as Str,
+    trackerLoadError: { 'hi-IN': 'आवेदन लोड नहीं हो सके।', 'mr-IN': 'अर्ज लोड करता आले नाहीत.', 'en-IN': 'Could not load your applications.' } as Str,
+    trackerLoading: { 'hi-IN': 'आवेदन लोड हो रहे हैं...', 'mr-IN': 'अर्ज लोड होत आहेत...', 'en-IN': 'Loading your applications...' } as Str,
+    generateLetterBtn: { 'hi-IN': 'तैयारी दस्तावेज़ बनाएं', 'mr-IN': 'तयारी दस्तऐवज तयार करा', 'en-IN': 'Generate Preparation Document' } as Str,
+    generatingLetter: { 'hi-IN': 'दस्तावेज़ बनाया जा रहा है...', 'mr-IN': 'दस्तऐवज तयार होत आहे...', 'en-IN': 'Generating document...' } as Str,
+    letterGeneratedHeading: { 'hi-IN': 'आपका तैयारी दस्तावेज़', 'mr-IN': 'तुमचा तयारी दस्तऐवज', 'en-IN': 'Your Preparation Document' } as Str,
+    letterError: { 'hi-IN': 'दस्तावेज़ नहीं बनाया जा सका। कृपया दोबारा कोशिश करें।', 'mr-IN': 'दस्तऐवज तयार करता आला नाही. कृपया पुन्हा प्रयत्न करा.', 'en-IN': 'Could not generate the document. Please try again.' } as Str,
+    letterUnavailable: { 'hi-IN': 'दस्तावेज़ पहले बनाया जा चुका है, लेकिन इसका टेक्स्ट अब उपलब्ध नहीं है (यह सहेजा नहीं जाता)। कृपया CSC केंद्र या सहायता से संपर्क करें।', 'mr-IN': 'दस्तऐवज आधीच तयार केला गेला आहे, पण त्याचा मजकूर आता उपलब्ध नाही (तो जतन केला जात नाही). कृपया CSC केंद्र किंवा मदतीशी संपर्क साधा.', 'en-IN': 'A preparation document was already generated for this application, but its text isn’t stored and can’t be shown again here. Please contact a CSC centre or support.' } as Str,
+    copyLetterBtn: { 'hi-IN': 'कॉपी करें', 'mr-IN': 'कॉपी करा', 'en-IN': 'Copy' } as Str,
+    letterCopied: { 'hi-IN': 'कॉपी किया गया ✓', 'mr-IN': 'कॉपी केले ✓', 'en-IN': 'Copied ✓' } as Str,
     updateBtn: { 'hi-IN': 'अपडेट करें', 'mr-IN': 'अपडेट करा', 'en-IN': 'Update' } as Str,
     findCSCArrow: { 'hi-IN': 'CSC खोजें →', 'mr-IN': 'CSC शोधा →', 'en-IN': 'Find CSC →' } as Str,
     shareCheck: { 'hi-IN': 'भेजें ✓', 'mr-IN': 'पाठवा ✓', 'en-IN': 'Share ✓' } as Str,
@@ -236,6 +273,51 @@ export const S = {
     iHaveThisDocument: { 'hi-IN': 'मेरे पास यह दस्तावेज़ है', 'mr-IN': 'माझ्याकडे हे कागदपत्र आहे', 'en-IN': 'I have this document' } as Str,
     checkDocumentReadinessBtn: { 'hi-IN': 'दस्तावेज़ तैयारी जाँचें', 'mr-IN': 'कागदपत्र तयारी तपासा', 'en-IN': 'Check Document Readiness' } as Str,
     backToOverview: { 'hi-IN': '← अवलोकन पर वापस जाएं', 'mr-IN': '← आढाव्याकडे परत जा', 'en-IN': '← Back to Overview' } as Str,
+
+    // Two-part Application Preparation Form: Part 1 (basic info, every
+    // applicant) -> Part 2 (domain-specific fields, scoped to the scheme's
+    // category via getSchemeCategory()).
+    stepPart1Label: { 'hi-IN': 'चरण 1 / 2: बुनियादी जानकारी', 'mr-IN': 'टप्पा 1 / 2: मूलभूत माहिती', 'en-IN': 'Step 1 of 2: Basic Information' } as Str,
+    stepPart2Prefix: { 'hi-IN': 'चरण 2 / 2:', 'mr-IN': 'टप्पा 2 / 2:', 'en-IN': 'Step 2 of 2:' } as Str,
+    detailsWord: { 'hi-IN': 'विवरण', 'mr-IN': 'तपशील', 'en-IN': 'Details' } as Str,
+    nextButtonPrefix: { 'hi-IN': 'आगे:', 'mr-IN': 'पुढे:', 'en-IN': 'Next:' } as Str,
+    backToBasicInfo: { 'hi-IN': '← बुनियादी जानकारी पर वापस जाएं', 'mr-IN': '← मूलभूत माहितीकडे परत जा', 'en-IN': '← Back to Basic Information' } as Str,
+
+    categoryLabelFarmer: { 'hi-IN': 'किसान', 'mr-IN': 'शेतकरी', 'en-IN': 'Farmer' } as Str,
+    categoryLabelHousing: { 'hi-IN': 'आवास', 'mr-IN': 'गृहनिर्माण', 'en-IN': 'Housing' } as Str,
+    categoryLabelHealth: { 'hi-IN': 'स्वास्थ्य', 'mr-IN': 'आरोग्य', 'en-IN': 'Health' } as Str,
+    categoryLabelBusiness: { 'hi-IN': 'व्यापार', 'mr-IN': 'व्यवसाय', 'en-IN': 'Business' } as Str,
+    categoryLabelWomen: { 'hi-IN': 'महिला', 'mr-IN': 'महिला', 'en-IN': 'Women' } as Str,
+    categoryLabelStudent: { 'hi-IN': 'छात्र', 'mr-IN': 'विद्यार्थी', 'en-IN': 'Student' } as Str,
+    categoryLabelGeneral: { 'hi-IN': 'अतिरिक्त', 'mr-IN': 'अतिरिक्त', 'en-IN': 'Additional' } as Str,
+
+    labelCurrentHouse: { 'hi-IN': 'वर्तमान घर का प्रकार', 'mr-IN': 'सध्याच्या घराचा प्रकार', 'en-IN': 'Current House Type' } as Str,
+    currentHouseKutcha: { 'hi-IN': 'कच्चा घर', 'mr-IN': 'कच्चे घर', 'en-IN': 'Kutcha (temporary)' } as Str,
+    currentHousePucca: { 'hi-IN': 'पक्का घर', 'mr-IN': 'पक्के घर', 'en-IN': 'Pucca (permanent)' } as Str,
+    currentHouseSemiPucca: { 'hi-IN': 'अर्ध-पक्का घर', 'mr-IN': 'अर्ध-पक्के घर', 'en-IN': 'Semi-pucca' } as Str,
+    labelBplStatus: { 'hi-IN': 'BPL राशन कार्ड स्थिति', 'mr-IN': 'BPL रेशन कार्ड स्थिती', 'en-IN': 'BPL Ration Card Status' } as Str,
+
+    labelRationCardType: { 'hi-IN': 'राशन कार्ड प्रकार', 'mr-IN': 'रेशन कार्ड प्रकार', 'en-IN': 'Ration Card Type' } as Str,
+    rationCardBpl: { 'hi-IN': 'BPL', 'mr-IN': 'BPL', 'en-IN': 'BPL' } as Str,
+    rationCardApl: { 'hi-IN': 'APL', 'mr-IN': 'APL', 'en-IN': 'APL' } as Str,
+    rationCardOther: { 'hi-IN': 'अन्य', 'mr-IN': 'इतर', 'en-IN': 'Other' } as Str,
+
+    labelBusinessType: { 'hi-IN': 'व्यापार का प्रकार', 'mr-IN': 'व्यवसायाचा प्रकार', 'en-IN': 'Business Type' } as Str,
+    labelBusinessAge: { 'hi-IN': 'व्यापार कितने समय से चल रहा है', 'mr-IN': 'व्यवसाय किती काळापासून सुरू आहे', 'en-IN': 'How Long Has the Business Been Running' } as Str,
+    labelExistingLoan: { 'hi-IN': 'कोई मौजूदा ऋण चूक', 'mr-IN': 'सध्याचे कर्ज थकबाकी', 'en-IN': 'Existing Loan Default' } as Str,
+
+    labelGirlChildAge: { 'hi-IN': 'बालिका की आयु', 'mr-IN': 'मुलीचे वय', 'en-IN': "Girl Child's Age" } as Str,
+
+    labelInstitutionName: { 'hi-IN': 'संस्थान का नाम', 'mr-IN': 'संस्थेचे नाव', 'en-IN': 'Institution Name' } as Str,
+    labelCourse: { 'hi-IN': 'पाठ्यक्रम', 'mr-IN': 'अभ्यासक्रम', 'en-IN': 'Course' } as Str,
+    labelYearOfStudy: { 'hi-IN': 'अध्ययन वर्ष', 'mr-IN': 'अभ्यासाचे वर्ष', 'en-IN': 'Year of Study' } as Str,
+    labelMarksOrPercentage: { 'hi-IN': 'अंक / प्रतिशत', 'mr-IN': 'गुण / टक्केवारी', 'en-IN': 'Marks / Percentage' } as Str,
+
+    generalDetailsHint: {
+      'hi-IN': 'इस योजना के लिए किसी विशेष श्रेणी की जानकारी आवश्यक नहीं है।',
+      'mr-IN': 'या योजनेसाठी कोणत्याही विशिष्ट प्रवर्गाची माहिती आवश्यक नाही.',
+      'en-IN': 'No category-specific information is needed for this scheme.',
+    } as Str,
   },
 
   // ── LANDING PAGE ────────────────────────────────────────────
@@ -425,6 +507,12 @@ export const S = {
     audienceSub: { 'hi-IN': 'अपनी स्थिति चुनें — हम आपको हर योजना दिखाते हैं जिसके आप पात्र हैं, दावा करने के पूर्ण मार्गदर्शन के साथ।', 'mr-IN': 'तुमची परिस्थिती निवडा — आम्ही तुम्हाला तुम्ही पात्र असलेली प्रत्येक योजना संपूर्ण मार्गदर्शनासह दाखवतो.', 'en-IN': 'Select your situation — we show every scheme you qualify for with full guidance to claim it.', 'ta-IN': 'உங்கள் நிலையைத் தேர்ந்தெடுக்கவும் — நீங்கள் தகுதியுள்ள ஒவ்வொரு திட்டத்தையும் முழு வழிகாட்டுதலுடன் காட்டுகிறோம்.', 'te-IN': 'మీ పరిస్థితిని ఎంచుకోండి — మీరు అర్హత పొందిన ప్రతి పథకాన్ని పూర్తి మార్గదర్శకత్వంతో చూపిస్తాము.', 'kn-IN': 'ನಿಮ್ಮ ಪರಿಸ್ಥಿತಿಯನ್ನು ಆಯ್ಕೆಮಾಡಿ — ನೀವು ಅರ್ಹರಾಗಿರುವ ಪ್ರತಿ ಯೋಜನೆಯನ್ನು ಸಂಪೂರ್ಣ ಮಾರ್ಗದರ್ಶನದೊಂದಿಗೆ ತೋರಿಸುತ್ತೇವೆ.', 'ml-IN': 'നിങ്ങളുടെ സാഹചര്യം തിരഞ്ഞെടുക്കുക — നിങ്ങൾക്ക് അർഹതയുള്ള എല്ലാ പദ്ധതിയും പൂർണ്ണ മാർഗനിർദേശത്തോടെ കാണിക്കുന്നു.', 'bn-IN': 'আপনার পরিস্থিতি নির্বাচন করুন — আমরা আপনার যোগ্য প্রতিটি প্রকল্প সম্পূর্ণ নির্দেশনা সহ দেখাই।', 'gu-IN': 'તમારી પરિસ્થિતિ પસંદ કરો — અમે તમને તમે પાત્ર છો તે દરેક યોજના સંપૂર્ણ માર્ગદર્શન સાથે બતાવીએ છીએ.', 'pa-IN': 'ਆਪਣੀ ਸਥਿਤੀ ਚੁਣੋ — ਅਸੀਂ ਤੁਹਾਨੂੰ ਹਰ ਯੋਜਨਾ ਦਿਖਾਉਂਦੇ ਹਾਂ ਜਿਸ ਲਈ ਤੁਸੀਂ ਯੋਗ ਹੋ, ਪੂਰੇ ਮਾਰਗਦਰਸ਼ਨ ਨਾਲ।' } as Str,
     schemesCount: { 'hi-IN': (n: number) => `${n} योजनाएं`, 'mr-IN': (n: number) => `${n} योजना`, 'en-IN': (n: number) => `${n} SCHEMES`, 'ta-IN': (n: number) => `${n} திட்டங்கள்`, 'te-IN': (n: number) => `${n} పథకాలు`, 'kn-IN': (n: number) => `${n} ಯೋಜನೆಗಳು`, 'ml-IN': (n: number) => `${n} പദ്ധതികൾ`, 'bn-IN': (n: number) => `${n} প্রকল্প`, 'gu-IN': (n: number) => `${n} યોજનાઓ`, 'pa-IN': (n: number) => `${n} ਯੋਜਨਾਵਾਂ` } as StrFn1,
     viewAll: { 'hi-IN': 'सभी योजनाएं देखें', 'mr-IN': 'सर्व योजना पहा', 'en-IN': 'View all schemes', 'ta-IN': 'அனைத்து திட்டங்களையும் காண்க', 'te-IN': 'అన్ని పథకాలను చూడండి', 'kn-IN': 'ಎಲ್ಲಾ ಯೋಜನೆಗಳನ್ನು ವೀಕ್ಷಿಸಿ', 'ml-IN': 'എല്ലാ പദ്ധതികളും കാണുക', 'bn-IN': 'সব প্রকল্প দেখুন', 'gu-IN': 'બધી યોજનાઓ જુઓ', 'pa-IN': 'ਸਾਰੀਆਂ ਯੋਜਨਾਵਾਂ ਵੇਖੋ' } as Str,
+    // Loading/empty/error states for the live backend-driven category
+    // buttons and audience cards (Sections 2 & 8) — new, so authored for
+    // all 10 languages.
+    loadingSchemes: { 'en-IN': 'Loading…', 'hi-IN': 'लोड हो रहा है...', 'mr-IN': 'लोड होत आहे...', 'ta-IN': 'ஏற்றப்படுகிறது...', 'te-IN': 'లోడ్ అవుతోంది...', 'kn-IN': 'ಲೋಡ್ ಆಗುತ್ತಿದೆ...', 'ml-IN': 'ലോഡ് ചെയ്യുന്നു...', 'bn-IN': 'লোড হচ্ছে...', 'gu-IN': 'લોડ થઈ રહ્યું છે...', 'pa-IN': 'ਲੋਡ ਹੋ ਰਿਹਾ ਹੈ...' } as Str,
+    couldNotLoad: { 'en-IN': 'Could not load schemes', 'hi-IN': 'योजनाएं लोड नहीं हो सकीं', 'mr-IN': 'योजना लोड होऊ शकल्या नाहीत', 'ta-IN': 'திட்டங்களை ஏற்ற முடியவில்லை', 'te-IN': 'పథకాలను లోడ్ చేయలేకపోయాము', 'kn-IN': 'ಯೋಜನೆಗಳನ್ನು ಲೋಡ್ ಮಾಡಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ', 'ml-IN': 'പദ്ധതികൾ ലോഡ് ചെയ്യാൻ കഴിഞ്ഞില്ല', 'bn-IN': 'প্রকল্পগুলো লোড করা যায়নি', 'gu-IN': 'યોજનાઓ લોડ કરી શકાઈ નથી', 'pa-IN': 'ਯੋਜਨਾਵਾਂ ਲੋਡ ਨਹੀਂ ਹੋ ਸਕੀਆਂ' } as Str,
+    retry: { 'en-IN': 'Retry', 'hi-IN': 'पुनः प्रयास करें', 'mr-IN': 'पुन्हा प्रयत्न करा', 'ta-IN': 'மீண்டும் முயற்சிக்கவும்', 'te-IN': 'మళ్లీ ప్రయత్నించండి', 'kn-IN': 'ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ', 'ml-IN': 'വീണ്ടും ശ്രമിക്കുക', 'bn-IN': 'আবার চেষ্টা করুন', 'gu-IN': 'ફરી પ્રયાસ કરો', 'pa-IN': 'ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ' } as Str,
     audFarmers: { 'hi-IN': 'किसान', 'mr-IN': 'शेतकरी', 'en-IN': 'Farmers', 'ta-IN': 'விவசாயிகள்', 'te-IN': 'రైతులు', 'kn-IN': 'ರೈತರು', 'ml-IN': 'കർഷകർ', 'bn-IN': 'কৃষক', 'gu-IN': 'ખેડૂતો', 'pa-IN': 'ਕਿਸਾਨ' } as Str,
     audFarmersDesc: { 'hi-IN': 'फसल बीमा, आय सहायता, सोलर पंप, कर्ज़', 'mr-IN': 'पीक विमा, उत्पन्न सहाय्य, सोलर पंप, कर्ज', 'en-IN': 'Crop insurance, income support, solar pumps, credit', 'ta-IN': 'பயிர் காப்பீடு, வருமான உதவி, சோலார் பம்புகள், கடன்', 'te-IN': 'పంట బీమా, ఆదాయ మద్దతు, సోలార్ పంపులు, రుణం', 'kn-IN': 'ಬೆಳೆ ವಿಮೆ, ಆದಾಯ ಬೆಂಬಲ, ಸೌರ ಪಂಪ್‌ಗಳು, ಸಾಲ', 'ml-IN': 'വിള ഇൻഷുറൻസ്, വരുമാന പിന്തുണ, സോളാർ പമ്പുകൾ, വായ്പ', 'bn-IN': 'ফসল বীমা, আয় সহায়তা, সোলার পাম্প, ঋণ', 'gu-IN': 'પાક વીમો, આવક સહાય, સોલર પંપ, લોન', 'pa-IN': 'ਫਸਲ ਬੀਮਾ, ਆਮਦਨ ਸਹਾਇਤਾ, ਸੋਲਰ ਪੰਪ, ਕਰਜ਼ਾ' } as Str,
     audWomen: { 'hi-IN': 'महिलाएं', 'mr-IN': 'महिला', 'en-IN': 'Women', 'ta-IN': 'பெண்கள்', 'te-IN': 'మహిళలు', 'kn-IN': 'ಮಹಿಳೆಯರು', 'ml-IN': 'സ്ത്രീകൾ', 'bn-IN': 'নারী', 'gu-IN': 'મહિલાઓ', 'pa-IN': 'ਔਰਤਾਂ' } as Str,
@@ -458,6 +546,7 @@ export const S = {
       'pa-IN': 'SuvidhaAI ਤੁਹਾਨੂੰ ਸਰਕਾਰੀ ਯੋਜਨਾਵਾਂ ਲੱਭਣ ਵਿੱਚ ਮਦਦ ਕਰਦਾ ਹੈ। ਸਧਾਰਨ ਮੋਡ ਵਿੱਚ ਬੋਲੋ — ਟਾਈਪਿੰਗ ਜਾਂ ਫਾਰਮ ਨਹੀਂ। ਫੁੱਲ ਮੋਡ ਵਿੱਚ ਵਿਸਤ੍ਰਿਤ ਯੋਗਤਾ ਜਾਂਚ ਅਤੇ ਅਰਜ਼ੀ ਤਿਆਰੀ ਕਰੋ। ਦੋਵੇਂ 10 ਭਾਰਤੀ ਭਾਸ਼ਾਵਾਂ ਵਿੱਚ ਉਪਲਬਧ ਹਨ।',
     } as Str,
     helpModalHelplineLabel: { 'hi-IN': 'हेल्पलाइन', 'mr-IN': 'हेल्पलाइन', 'en-IN': 'Helpline', 'ta-IN': 'உதவி எண்', 'te-IN': 'హెల్ప్‌లైన్', 'kn-IN': 'ಸಹಾಯವಾಣಿ', 'ml-IN': 'ഹെൽപ്പ്‌ലൈൻ', 'bn-IN': 'হেল্পলাইন', 'gu-IN': 'હેલ્પલાઇન', 'pa-IN': 'ਹੈਲਪਲਾਈਨ' } as Str,
+    helpModalEmailLabel: { 'en-IN': 'Email', 'hi-IN': 'ईमेल', 'mr-IN': 'ईमेल', 'ta-IN': 'மின்னஞ்சல்', 'te-IN': 'ఇమెయిల్', 'kn-IN': 'ಇಮೇಲ್', 'ml-IN': 'ഇമെയിൽ', 'bn-IN': 'ইমেইল', 'gu-IN': 'ઈમેલ', 'pa-IN': 'ਈਮੇਲ' } as Str,
     helpModalClose: { 'hi-IN': 'बंद करें', 'mr-IN': 'बंद करा', 'en-IN': 'Close', 'ta-IN': 'மூடு', 'te-IN': 'మూసివేయండి', 'kn-IN': 'ಮುಚ್ಚಿ', 'ml-IN': 'അടയ്ക്കുക', 'bn-IN': 'বন্ধ করুন', 'gu-IN': 'બંધ કરો', 'pa-IN': 'ਬੰਦ ਕਰੋ' } as Str,
   },
 }

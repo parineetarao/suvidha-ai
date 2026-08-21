@@ -14,8 +14,10 @@ import { ReadinessSummary } from '@/components/document-readiness/ReadinessSumma
 import type { ReadinessScoreOutput } from '@/lib/document-readiness/readiness-score';
 import { transcribeAudio, type VoiceLanguage } from '@/lib/voice';
 import { ApiError } from '@/lib/api-client';
+import { useAuth } from '@/lib/auth-context';
 import { synthesizeSpeech } from '@/lib/tts';
 import { searchSchemesFromVoiceText, type RealSchemeMatch, type ParsedVoiceProfile } from '@/lib/scheme-voice-search';
+import { getScheme as apiGetScheme } from '@/lib/api';
 
 // The document-readiness subsystem (drt/DR, NameConsistencyCard, ReadinessSummary,
 // DocumentReadinessCheck) has its own separate translation dictionary scoped to
@@ -57,7 +59,12 @@ function mapSimpleDocIdToType(id: string): DocumentType {
 
 type ConversationStage = 'greeting' | 'waiting' | 'processing' | 'results_shown';
 type MessageType = 'bot' | 'user' | 'typing' | 'schemes' | 'prepPrompt' | 'docCheck';
-type SchemeCategory = 'farmer' | 'women' | 'student' | 'housing' | 'senior' | 'business';
+// 'general' is the honest "we don't know / nothing scheme-specific applies
+// yet" bucket — used whenever the actual matched scheme's category can't be
+// mapped to one of the more specific buckets below. It must NEVER be
+// silently swapped for 'farmer' (or any other specific bucket) just because
+// it's the first one in this list — see deriveDocCategory().
+type SchemeCategory = 'farmer' | 'women' | 'student' | 'housing' | 'senior' | 'business' | 'general';
 type DocCheckStatus = 'unchecked' | 'yes' | 'no';
 type ScriptLang = 'hindi' | 'marathi' | 'english';
 
@@ -72,6 +79,14 @@ type Message = {
   timestamp: string;
   realResults?: RealSchemeMatch[];
   parsedProfile?: ParsedVoiceProfile;
+  // Marks the two pre-conversation greeting bubbles. Their text is looked
+  // up live from `greetings[current language]` at render time (see the
+  // message-list render below) instead of being frozen in as plain `text`
+  // the way every other bot message is — that's what lets the greeting
+  // actually change language when the user switches the dropdown before
+  // saying/typing anything, instead of staying stuck in whatever language
+  // was selected at the moment it was first added.
+  greetingPart?: 1 | 2;
 };
 
 type SchemeItem = {
@@ -128,19 +143,67 @@ function getSchemeSteps(scheme: SchemeItem, lang: UiLang): string[] {
 const getTime = () => new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 
 // Module-level (not React state) so speak() can stop whatever's currently
-// playing before starting the next line — same pattern as the
-// window.speechSynthesis singleton this replaces.
+// playing, and so queued lines survive across the many separate call sites
+// (greeting, search results, prep prompts, etc) that all just call speak().
 let currentTtsAudio: HTMLAudioElement | null = null;
+let currentUtterance: SpeechSynthesisUtterance | null = null;
 
-function speakWithBrowserTts(text: string, lang: string) {
-  if (typeof window === 'undefined' || !window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = lang;
-  utterance.rate = lang === 'en-IN' ? 0.95 : 0.82;
-  utterance.pitch = 1;
-  utterance.volume = 1;
-  window.speechSynthesis.speak(utterance);
+// Every call site below fires speak() on its own fixed setTimeout, sized for
+// how long the PREVIOUS UI step should visually linger — not for how long
+// the audio for that step actually takes to play. A short delay next to a
+// long line of speech (the greeting is the clearest case: msg1 is a full
+// sentence, msg2 was scheduled 2.8s later regardless) used to mean the next
+// speak() call would pause/replace whatever audio was still playing,
+// chopping it off mid-sentence. Routing every call through this queue
+// instead — each entry awaits the previous one's audio actually finishing —
+// decouples "when the message bubble appears" from "when it's safe to speak
+// the next line," without having to touch every call site's timing.
+let ttsQueue: Promise<void> = Promise.resolve();
+
+function speakWithBrowserTts(text: string, lang: string): Promise<void> {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return Promise.resolve();
+  return new Promise((resolve) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    currentUtterance = utterance;
+    utterance.lang = lang;
+    utterance.rate = lang === 'en-IN' ? 0.95 : 0.82;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    utterance.onend = () => resolve();
+    utterance.onerror = () => resolve();
+    window.speechSynthesis.speak(utterance);
+  });
+}
+
+// Stops whatever's currently playing/queued — used for deliberate
+// interrupts (muting, language switch, starting a fresh conversation), as
+// opposed to the queue above which is for back-to-back lines that should
+// each be heard in full.
+function stopSpeaking() {
+  if (currentTtsAudio) {
+    currentTtsAudio.pause();
+    currentTtsAudio = null;
+  }
+  currentUtterance = null;
+  window.speechSynthesis?.cancel();
+  ttsQueue = Promise.resolve();
+}
+
+async function playOnce(text: string, lang: string): Promise<void> {
+  try {
+    const blob = await synthesizeSpeech(text, toVoiceLanguage(lang));
+    const url = URL.createObjectURL(blob);
+    await new Promise<void>((resolve) => {
+      const audio = new Audio(url);
+      currentTtsAudio = audio;
+      const cleanup = () => { URL.revokeObjectURL(url); resolve(); };
+      audio.addEventListener('ended', cleanup);
+      audio.addEventListener('error', cleanup);
+      audio.play().catch(cleanup);
+    });
+  } catch {
+    await speakWithBrowserTts(text, lang);
+  }
 }
 
 // Server-side TTS (gTTS) so every language actually produces audio,
@@ -149,25 +212,15 @@ function speakWithBrowserTts(text: string, lang: string) {
 // matching local voice (commonly everything except Hindi/English on
 // Windows). Falls back to the browser's own TTS if the server call fails
 // (offline, backend down) so speech doesn't go completely silent.
-async function speak(text: string, lang = 'hi-IN') {
-  if (typeof window === 'undefined') return;
-
-  if (currentTtsAudio) {
-    currentTtsAudio.pause();
-    currentTtsAudio = null;
-  }
-  window.speechSynthesis?.cancel();
-
-  try {
-    const blob = await synthesizeSpeech(text, toVoiceLanguage(lang));
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    currentTtsAudio = audio;
-    audio.addEventListener('ended', () => URL.revokeObjectURL(url));
-    await audio.play();
-  } catch {
-    speakWithBrowserTts(text, lang);
-  }
+//
+// Queued rather than interrupting: every caller just calls speak() on its
+// own timer, so this needs to guarantee each line plays to completion
+// before the next one starts, regardless of how those timers overlap.
+function speak(text: string, lang = 'hi-IN'): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve();
+  const task = ttsQueue.then(() => playOnce(text, lang));
+  ttsQueue = task.catch(() => {});
+  return task;
 }
 
 type UiLang = 'hi-IN' | 'mr-IN' | 'en-IN' | 'ta-IN' | 'te-IN' | 'kn-IN' | 'ml-IN' | 'bn-IN' | 'gu-IN' | 'pa-IN';
@@ -176,9 +229,9 @@ const uiStrings = {
   'hi-IN': {
     govSchemeHelper: 'सरकारी योजना सहायक',
     sarkariSahayak: 'सरकारी सहायक',
-    activeConversation: 'ACTIVE CONVERSATION',
-    farmerSearch: 'Farmer schemes search',
-    farmerSearchSub: 'मैं महाराष्ट्र से एक किसान...',
+    activeConversation: 'सक्रिय संभाषण',
+    farmerSearch: 'योजना खोज',
+    farmerSearchSub: 'अभी कोई सक्रिय खोज नहीं',
     whatsapp: 'WhatsApp पर भेजें',
     helpline: 'Helpline · 155261',
     csc: 'नज़दीकी CSC खोजें',
@@ -186,9 +239,9 @@ const uiStrings = {
     detailedMode: 'विस्तृत',
     sarkaricSahayakSub: 'सरकारी सहायक · सरल मोड',
     typeHere: 'यहाँ लिखें या नीचे बोलें...',
-    shareBtn: 'Share',
+    shareBtn: 'शेयर करें',
     helplineBtn: 'Helpline 155261',
-    findCSC: 'Find Nearest CSC',
+    findCSC: 'नज़दीकी CSC खोजें',
     today: 'आज',
     docCheckTitle: 'दस्तावेज़ जाँच — Document Check',
     warningNote: 'ध्यान रखें: आधार में नाम, ज़मीन के कागज़ में नाम, और बैंक में नाम — तीनों बिल्कुल एक जैसे होने चाहिए। यही सबसे बड़ा rejection का कारण है।',
@@ -214,7 +267,7 @@ const uiStrings = {
     transcribing: 'समझ रहा हूँ...',
     voiceMicError: 'माइक्रोफ़ोन एक्सेस नहीं मिला। कृपया अनुमति दें और फिर कोशिश करें।',
     voiceTranscribeError: 'आवाज़ को समझने में समस्या हुई। कृपया दोबारा कोशिश करें।',
-    voiceSessionExpiredError: 'आपका सत्र समाप्त हो गया है। कृपया पेज को दोबारा लोड करें और फिर कोशिश करें।',
+    voiceSessionExpiredError: 'आपका सत्र समाप्त हो गया है। कृपया दोबारा लॉगिन करें।',
     voiceEmptyError: 'कुछ सुनाई नहीं दिया। कृपया दोबारा बोलें।',
     detectedLabel: 'आपकी बात से समझा:',
     detectedFemale: 'महिला',
@@ -223,7 +276,7 @@ const uiStrings = {
     noRealMatches: 'आपकी जानकारी के लिए कोई योजना नहीं मिली।',
     speakBtn: 'बोलकर खोजें',
     pincodeLabel: 'अपना Pin Code डालें:',
-    goBtn: 'Go',
+    goBtn: 'जाएं',
     voiceQuery: 'किसान कर्ज़ और खेती की योजना बताइए',
     progressLabel: (checked: number, total: number) => checked + ' में से ' + total + ' तैयार',
     eligibleBadge: '✓ पात्र',
@@ -243,8 +296,8 @@ const uiStrings = {
     govSchemeHelper: 'सरकारी योजना सहाय्यक',
     sarkariSahayak: 'सरकारी सहाय्यक',
     activeConversation: 'सक्रिय संभाषण',
-    farmerSearch: 'शेतकरी योजना शोध',
-    farmerSearchSub: 'मी महाराष्ट्रातून एक शेतकरी...',
+    farmerSearch: 'योजना शोध',
+    farmerSearchSub: 'सध्या कोणतीही सक्रिय शोध नाही',
     whatsapp: 'WhatsApp वर पाठवा',
     helpline: 'Helpline · 155261',
     csc: 'जवळचे CSC शोधा',
@@ -252,7 +305,7 @@ const uiStrings = {
     detailedMode: 'तपशील',
     sarkaricSahayakSub: 'सरकारी सहाय्यक · सोपी पद्धत',
     typeHere: 'येथे लिहा किंवा खाली बोला...',
-    shareBtn: 'Share',
+    shareBtn: 'शेअर करा',
     helplineBtn: 'Helpline 155261',
     findCSC: 'जवळचे CSC शोधा',
     today: 'आज',
@@ -280,7 +333,7 @@ const uiStrings = {
     transcribing: 'समजून घेत आहे...',
     voiceMicError: 'मायक्रोफोन अ‍ॅक्सेस मिळाला नाही. कृपया परवानगी द्या आणि पुन्हा प्रयत्न करा.',
     voiceTranscribeError: 'आवाज समजण्यात अडचण आली. कृपया पुन्हा प्रयत्न करा.',
-    voiceSessionExpiredError: 'तुमचे सत्र संपले आहे. कृपया पेज पुन्हा लोड करा आणि पुन्हा प्रयत्न करा.',
+    voiceSessionExpiredError: 'तुमचे सत्र संपले आहे. कृपया पुन्हा लॉगिन करा.',
     voiceEmptyError: 'काही ऐकू आले नाही. कृपया पुन्हा बोला.',
     detectedLabel: 'तुमच्या बोलण्यावरून समजले:',
     detectedFemale: 'महिला',
@@ -289,7 +342,7 @@ const uiStrings = {
     noRealMatches: 'तुमच्या माहितीसाठी कोणतीही योजना सापडली नाही.',
     speakBtn: 'बोलून शोधा',
     pincodeLabel: 'आपला Pin Code टाका:',
-    goBtn: 'Go',
+    goBtn: 'जा',
     voiceQuery: 'शेतकरी कर्ज आणि शेतीच्या योजना सांगा',
     progressLabel: (checked: number, total: number) => total + ' पैकी ' + checked + ' तयार',
     eligibleBadge: '✓ पात्र',
@@ -309,8 +362,8 @@ const uiStrings = {
     govSchemeHelper: 'GOVERNMENT SCHEME HELPER',
     sarkariSahayak: 'Government Assistant',
     activeConversation: 'ACTIVE CONVERSATION',
-    farmerSearch: 'Farmer schemes search',
-    farmerSearchSub: 'I am a farmer from Maharashtra...',
+    farmerSearch: 'Scheme search',
+    farmerSearchSub: 'No active search yet',
     whatsapp: 'Share on WhatsApp',
     helpline: 'Helpline · 155261',
     csc: 'Find Nearest CSC',
@@ -346,7 +399,7 @@ const uiStrings = {
     transcribing: 'Understanding...',
     voiceMicError: 'Microphone access denied. Please allow microphone access and try again.',
     voiceTranscribeError: 'Could not transcribe audio. Please try again.',
-    voiceSessionExpiredError: 'Your session expired. Please reload the page and try again.',
+    voiceSessionExpiredError: 'Your session expired. Please log in again.',
     voiceEmptyError: 'Could not understand the audio. Please try again.',
     detectedLabel: 'Detected from what you said:',
     detectedFemale: 'woman',
@@ -375,8 +428,8 @@ const uiStrings = {
     govSchemeHelper: 'அரசு திட்ட உதவியாளர்',
     sarkariSahayak: 'அரசு உதவியாளர்',
     activeConversation: 'நடப்பு உரையாடல்',
-    farmerSearch: 'விவசாயி திட்டங்கள் தேடல்',
-    farmerSearchSub: 'நான் மகாராஷ்டிராவைச் சேர்ந்த ஒரு விவசாயி...',
+    farmerSearch: 'திட்டத் தேடல்',
+    farmerSearchSub: 'தற்போது செயலில் தேடல் இல்லை',
     whatsapp: 'WhatsApp-இல் அனுப்பு',
     helpline: 'Helpline · 155261',
     csc: 'அருகிலுள்ள CSC தேடு',
@@ -384,7 +437,7 @@ const uiStrings = {
     detailedMode: 'விரிவான',
     sarkaricSahayakSub: 'அரசு உதவியாளர் · எளிய முறை',
     typeHere: 'இங்கே தட்டச்சு செய்யவும் அல்லது கீழே பேசவும்...',
-    shareBtn: 'Share',
+    shareBtn: 'பகிரவும்',
     helplineBtn: 'Helpline 155261',
     findCSC: 'அருகிலுள்ள CSC தேடு',
     today: 'இன்று',
@@ -412,7 +465,7 @@ const uiStrings = {
     transcribing: 'புரிந்துகொள்கிறேன்...',
     voiceMicError: 'மைக்ரோஃபோன் அனுமதி கிடைக்கவில்லை. தயவுசெய்து அனுமதி அளித்து மீண்டும் முயற்சிக்கவும்.',
     voiceTranscribeError: 'குரலைப் புரிந்துகொள்வதில் சிக்கல் ஏற்பட்டது. மீண்டும் முயற்சிக்கவும்.',
-    voiceSessionExpiredError: 'உங்கள் அமர்வு காலாவதியானது. பக்கத்தை மீண்டும் ஏற்றி மீண்டும் முயற்சிக்கவும்.',
+    voiceSessionExpiredError: 'உங்கள் அமர்வு காலாவதியானது. தயவுசெய்து மீண்டும் உள்நுழையவும்.',
     voiceEmptyError: 'எதுவும் கேட்கவில்லை. மீண்டும் பேசவும்.',
     detectedLabel: 'நீங்கள் சொன்னதிலிருந்து கண்டறியப்பட்டது:',
     detectedFemale: 'பெண்',
@@ -421,7 +474,7 @@ const uiStrings = {
     noRealMatches: 'உங்கள் விவரங்களுக்கு பொருந்தும் திட்டங்கள் எதுவும் கிடைக்கவில்லை.',
     speakBtn: 'பேசித் தேடு',
     pincodeLabel: 'உங்கள் Pin Code-ஐ உள்ளிடவும்:',
-    goBtn: 'Go',
+    goBtn: 'செல்',
     voiceQuery: 'விவசாயி கடன் மற்றும் விவசாயத் திட்டங்களைப் பற்றி சொல்லுங்கள்',
     progressLabel: (checked: number, total: number) => checked + ' / ' + total + ' தயார்',
     eligibleBadge: '✓ தகுதி',
@@ -441,8 +494,8 @@ const uiStrings = {
     govSchemeHelper: 'ప్రభుత్వ పథకాల సహాయకుడు',
     sarkariSahayak: 'ప్రభుత్వ సహాయకుడు',
     activeConversation: 'ప్రస్తుత సంభాషణ',
-    farmerSearch: 'రైతు పథకాల శోధన',
-    farmerSearchSub: 'నేను మహారాష్ట్ర నుండి వచ్చిన రైతును...',
+    farmerSearch: 'పథక శోధన',
+    farmerSearchSub: 'ప్రస్తుతం చురుకైన శోధన లేదు',
     whatsapp: 'WhatsApp‌కు పంపండి',
     helpline: 'Helpline · 155261',
     csc: 'సమీప CSC వెతకండి',
@@ -450,7 +503,7 @@ const uiStrings = {
     detailedMode: 'వివరణాత్మక',
     sarkaricSahayakSub: 'ప్రభుత్వ సహాయకుడు · సరళ మోడ్',
     typeHere: 'ఇక్కడ టైప్ చేయండి లేదా క్రింద మాట్లాడండి...',
-    shareBtn: 'Share',
+    shareBtn: 'షేర్ చేయండి',
     helplineBtn: 'Helpline 155261',
     findCSC: 'సమీప CSC వెతకండి',
     today: 'ఈ రోజు',
@@ -478,7 +531,7 @@ const uiStrings = {
     transcribing: 'అర్థం చేసుకుంటున్నాను...',
     voiceMicError: 'మైక్రోఫోన్ యాక్సెస్ దొరకలేదు. దయచేసి అనుమతి ఇచ్చి మళ్లీ ప్రయత్నించండి.',
     voiceTranscribeError: 'మాటను అర్థం చేసుకోవడంలో సమస్య వచ్చింది. దయచేసి మళ్లీ ప్రయత్నించండి.',
-    voiceSessionExpiredError: 'మీ సెషన్ ముగిసింది. దయచేసి పేజీని రీలోడ్ చేసి మళ్లీ ప్రయత్నించండి.',
+    voiceSessionExpiredError: 'మీ సెషన్ ముగిసింది. దయచేసి మళ్లీ లాగిన్ అవ్వండి.',
     voiceEmptyError: 'ఏమీ వినిపించలేదు. దయచేసి మళ్లీ మాట్లాడండి.',
     detectedLabel: 'మీరు చెప్పినదాని నుండి గుర్తించినది:',
     detectedFemale: 'మహిళ',
@@ -487,7 +540,7 @@ const uiStrings = {
     noRealMatches: 'మీ వివరాలకు సరిపోలే పథకాలు కనుగొనబడలేదు.',
     speakBtn: 'మాట్లాడి వెతకండి',
     pincodeLabel: 'మీ Pin Code నమోదు చేయండి:',
-    goBtn: 'Go',
+    goBtn: 'వెళ్ళు',
     voiceQuery: 'రైతు రుణాలు మరియు వ్యవసాయ పథకాల గురించి చెప్పండి',
     progressLabel: (checked: number, total: number) => checked + ' / ' + total + ' సిద్ధం',
     eligibleBadge: '✓ అర్హత',
@@ -507,8 +560,8 @@ const uiStrings = {
     govSchemeHelper: 'ಸರ್ಕಾರಿ ಯೋಜನೆ ಸಹಾಯಕ',
     sarkariSahayak: 'ಸರ್ಕಾರಿ ಸಹಾಯಕ',
     activeConversation: 'ಪ್ರಸ್ತುತ ಸಂಭಾಷಣೆ',
-    farmerSearch: 'ರೈತ ಯೋಜನೆಗಳ ಹುಡುಕಾಟ',
-    farmerSearchSub: 'ನಾನು ಮಹಾರಾಷ್ಟ್ರದ ಒಬ್ಬ ರೈತ...',
+    farmerSearch: 'ಯೋಜನೆ ಹುಡುಕಾಟ',
+    farmerSearchSub: 'ಪ್ರಸ್ತುತ ಯಾವುದೇ ಸಕ್ರಿಯ ಹುಡುಕಾಟ ಇಲ್ಲ',
     whatsapp: 'WhatsApp‌ಗೆ ಕಳುಹಿಸಿ',
     helpline: 'Helpline · 155261',
     csc: 'ಹತ್ತಿರದ CSC ಹುಡುಕಿ',
@@ -516,7 +569,7 @@ const uiStrings = {
     detailedMode: 'ವಿವರವಾದ',
     sarkaricSahayakSub: 'ಸರ್ಕಾರಿ ಸಹಾಯಕ · ಸರಳ ಮೋಡ್',
     typeHere: 'ಇಲ್ಲಿ ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ಕೆಳಗೆ ಮಾತನಾಡಿ...',
-    shareBtn: 'Share',
+    shareBtn: 'ಹಂಚಿಕೊಳ್ಳಿ',
     helplineBtn: 'Helpline 155261',
     findCSC: 'ಹತ್ತಿರದ CSC ಹುಡುಕಿ',
     today: 'ಇಂದು',
@@ -544,7 +597,7 @@ const uiStrings = {
     transcribing: 'ಅರ್ಥಮಾಡಿಕೊಳ್ಳುತ್ತಿದ್ದೇನೆ...',
     voiceMicError: 'ಮೈಕ್ರೊಫೋನ್ ಪ್ರವೇಶ ಸಿಗಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಅನುಮತಿ ನೀಡಿ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.',
     voiceTranscribeError: 'ಧ್ವನಿಯನ್ನು ಅರ್ಥಮಾಡಿಕೊಳ್ಳುವಲ್ಲಿ ಸಮಸ್ಯೆ ಆಯಿತು. ದಯವಿಟ್ಟು ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.',
-    voiceSessionExpiredError: 'ನಿಮ್ಮ ಸೆಷನ್ ಅವಧಿ ಮುಗಿದಿದೆ. ದಯವಿಟ್ಟು ಪುಟವನ್ನು ಮರುಲೋಡ್ ಮಾಡಿ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.',
+    voiceSessionExpiredError: 'ನಿಮ್ಮ ಸೆಷನ್ ಅವಧಿ ಮುಗಿದಿದೆ. ದಯವಿಟ್ಟು ಮತ್ತೆ ಲಾಗಿನ್ ಮಾಡಿ.',
     voiceEmptyError: 'ಏನೂ ಕೇಳಿಸಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಮತ್ತೆ ಮಾತನಾಡಿ.',
     detectedLabel: 'ನೀವು ಹೇಳಿದ್ದರಿಂದ ಗುರುತಿಸಲಾಗಿದೆ:',
     detectedFemale: 'ಮಹಿಳೆ',
@@ -553,7 +606,7 @@ const uiStrings = {
     noRealMatches: 'ನಿಮ್ಮ ವಿವರಗಳಿಗೆ ಹೊಂದುವ ಯೋಜನೆಗಳು ಸಿಗಲಿಲ್ಲ.',
     speakBtn: 'ಮಾತನಾಡಿ ಹುಡುಕಿ',
     pincodeLabel: 'ನಿಮ್ಮ Pin Code ನಮೂದಿಸಿ:',
-    goBtn: 'Go',
+    goBtn: 'ಹೋಗು',
     voiceQuery: 'ರೈತ ಸಾಲ ಮತ್ತು ಕೃಷಿ ಯೋಜನೆಗಳ ಬಗ್ಗೆ ಹೇಳಿ',
     progressLabel: (checked: number, total: number) => checked + ' / ' + total + ' ಸಿದ್ಧ',
     eligibleBadge: '✓ ಅರ್ಹ',
@@ -573,8 +626,8 @@ const uiStrings = {
     govSchemeHelper: 'സർക്കാർ പദ്ധതി സഹായി',
     sarkariSahayak: 'സർക്കാർ സഹായി',
     activeConversation: 'നിലവിലെ സംഭാഷണം',
-    farmerSearch: 'കർഷക പദ്ധതികളുടെ തിരയൽ',
-    farmerSearchSub: 'ഞാൻ മഹാരാഷ്ട്രയിൽ നിന്നുള്ള ഒരു കർഷകനാണ്...',
+    farmerSearch: 'പദ്ധതി തിരയൽ',
+    farmerSearchSub: 'നിലവിൽ സജീവ തിരയൽ ഇല്ല',
     whatsapp: 'WhatsApp‌ൽ അയയ്ക്കുക',
     helpline: 'Helpline · 155261',
     csc: 'അടുത്തുള്ള CSC കണ്ടെത്തുക',
@@ -582,7 +635,7 @@ const uiStrings = {
     detailedMode: 'വിശദമായ',
     sarkaricSahayakSub: 'സർക്കാർ സഹായി · ലളിത മോഡ്',
     typeHere: 'ഇവിടെ ടൈപ്പ് ചെയ്യുക അല്ലെങ്കിൽ താഴെ സംസാരിക്കുക...',
-    shareBtn: 'Share',
+    shareBtn: 'പങ്കിടുക',
     helplineBtn: 'Helpline 155261',
     findCSC: 'അടുത്തുള്ള CSC കണ്ടെത്തുക',
     today: 'ഇന്ന്',
@@ -610,7 +663,7 @@ const uiStrings = {
     transcribing: 'മനസ്സിലാക്കുന്നു...',
     voiceMicError: 'മൈക്രോഫോൺ ആക്സസ് ലഭിച്ചില്ല. ദയവായി അനുമതി നൽകി വീണ്ടും ശ്രമിക്കുക.',
     voiceTranscribeError: 'ശബ്ദം മനസ്സിലാക്കുന്നതിൽ പ്രശ്നമുണ്ടായി. ദയവായി വീണ്ടും ശ്രമിക്കുക.',
-    voiceSessionExpiredError: 'നിങ്ങളുടെ സെഷൻ കാലഹരണപ്പെട്ടു. ദയവായി പേജ് വീണ്ടും ലോഡ് ചെയ്ത് വീണ്ടും ശ്രമിക്കുക.',
+    voiceSessionExpiredError: 'നിങ്ങളുടെ സെഷൻ കാലഹരണപ്പെട്ടു. ദയവായി വീണ്ടും ലോഗിൻ ചെയ്യുക.',
     voiceEmptyError: 'ഒന്നും കേട്ടില്ല. ദയവായി വീണ്ടും സംസാരിക്കുക.',
     detectedLabel: 'നിങ്ങൾ പറഞ്ഞതിൽ നിന്ന് കണ്ടെത്തിയത്:',
     detectedFemale: 'സ്ത്രീ',
@@ -619,7 +672,7 @@ const uiStrings = {
     noRealMatches: 'നിങ്ങളുടെ വിവരങ്ങൾക്ക് അനുയോജ്യമായ പദ്ധതികൾ കണ്ടെത്തിയില്ല.',
     speakBtn: 'സംസാരിച്ച് തിരയുക',
     pincodeLabel: 'നിങ്ങളുടെ Pin Code നൽകുക:',
-    goBtn: 'Go',
+    goBtn: 'പോകുക',
     voiceQuery: 'കർഷക വായ്പകളെയും കൃഷി പദ്ധതികളെയും കുറിച്ച് പറയുക',
     progressLabel: (checked: number, total: number) => checked + ' / ' + total + ' തയ്യാർ',
     eligibleBadge: '✓ യോഗ്യത',
@@ -639,8 +692,8 @@ const uiStrings = {
     govSchemeHelper: 'সরকারি প্রকল্প সহায়ক',
     sarkariSahayak: 'সরকারি সহায়ক',
     activeConversation: 'চলমান কথোপকথন',
-    farmerSearch: 'কৃষক প্রকল্প অনুসন্ধান',
-    farmerSearchSub: 'আমি মহারাষ্ট্রের একজন কৃষক...',
+    farmerSearch: 'প্রকল্প অনুসন্ধান',
+    farmerSearchSub: 'বর্তমানে কোনো সক্রিয় অনুসন্ধান নেই',
     whatsapp: 'WhatsApp‌এ পাঠান',
     helpline: 'Helpline · 155261',
     csc: 'নিকটতম CSC খুঁজুন',
@@ -648,7 +701,7 @@ const uiStrings = {
     detailedMode: 'বিস্তারিত',
     sarkaricSahayakSub: 'সরকারি সহায়ক · সহজ মোড',
     typeHere: 'এখানে লিখুন অথবা নিচে বলুন...',
-    shareBtn: 'Share',
+    shareBtn: 'শেয়ার করুন',
     helplineBtn: 'Helpline 155261',
     findCSC: 'নিকটতম CSC খুঁজুন',
     today: 'আজ',
@@ -676,7 +729,7 @@ const uiStrings = {
     transcribing: 'বুঝছি...',
     voiceMicError: 'মাইক্রোফোন অ্যাক্সেস পাওয়া যায়নি। অনুগ্রহ করে অনুমতি দিন এবং আবার চেষ্টা করুন।',
     voiceTranscribeError: 'কণ্ঠস্বর বুঝতে সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।',
-    voiceSessionExpiredError: 'আপনার সেশন শেষ হয়ে গেছে। অনুগ্রহ করে পেজটি পুনরায় লোড করে আবার চেষ্টা করুন।',
+    voiceSessionExpiredError: 'আপনার সেশন শেষ হয়ে গেছে। অনুগ্রহ করে আবার লগইন করুন।',
     voiceEmptyError: 'কিছু শোনা যায়নি। অনুগ্রহ করে আবার বলুন।',
     detectedLabel: 'আপনি যা বলেছেন তা থেকে বোঝা গেছে:',
     detectedFemale: 'মহিলা',
@@ -685,7 +738,7 @@ const uiStrings = {
     noRealMatches: 'আপনার তথ্যের সাথে মেলে এমন কোনো প্রকল্প পাওয়া যায়নি।',
     speakBtn: 'বলে খুঁজুন',
     pincodeLabel: 'আপনার Pin Code লিখুন:',
-    goBtn: 'Go',
+    goBtn: 'যান',
     voiceQuery: 'কৃষক ঋণ এবং কৃষি প্রকল্প সম্পর্কে বলুন',
     progressLabel: (checked: number, total: number) => checked + ' / ' + total + ' প্রস্তুত',
     eligibleBadge: '✓ যোগ্য',
@@ -705,8 +758,8 @@ const uiStrings = {
     govSchemeHelper: 'સરકારી યોજના સહાયક',
     sarkariSahayak: 'સરકારી સહાયક',
     activeConversation: 'ચાલુ વાતચીત',
-    farmerSearch: 'ખેડૂત યોજના શોધ',
-    farmerSearchSub: 'હું મહારાષ્ટ્રનો એક ખેડૂત છું...',
+    farmerSearch: 'યોજના શોધ',
+    farmerSearchSub: 'હાલમાં કોઈ સક્રિય શોધ નથી',
     whatsapp: 'WhatsApp પર મોકલો',
     helpline: 'Helpline · 155261',
     csc: 'નજીકનું CSC શોધો',
@@ -714,7 +767,7 @@ const uiStrings = {
     detailedMode: 'વિગતવાર',
     sarkaricSahayakSub: 'સરકારી સહાયક · સરળ મોડ',
     typeHere: 'અહીં લખો અથવા નીચે બોલો...',
-    shareBtn: 'Share',
+    shareBtn: 'શેર કરો',
     helplineBtn: 'Helpline 155261',
     findCSC: 'નજીકનું CSC શોધો',
     today: 'આજે',
@@ -742,7 +795,7 @@ const uiStrings = {
     transcribing: 'સમજી રહ્યો છું...',
     voiceMicError: 'માઇક્રોફોન એક્સેસ મળ્યો નથી. કૃપા કરી પરવાનગી આપો અને ફરી પ્રયાસ કરો.',
     voiceTranscribeError: 'અવાજ સમજવામાં સમસ્યા આવી. કૃપા કરી ફરી પ્રયાસ કરો.',
-    voiceSessionExpiredError: 'તમારું સત્ર સમાપ્ત થયું છે. કૃપા કરી પેજ ફરી લોડ કરો અને ફરી પ્રયાસ કરો.',
+    voiceSessionExpiredError: 'તમારું સત્ર સમાપ્ત થયું છે. કૃપા કરી ફરીથી લોગિન કરો.',
     voiceEmptyError: 'કંઈ સંભળાયું નહીં. કૃપા કરી ફરી બોલો.',
     detectedLabel: 'તમે જે કહ્યું તેના પરથી સમજાયું:',
     detectedFemale: 'મહિલા',
@@ -751,7 +804,7 @@ const uiStrings = {
     noRealMatches: 'તમારી વિગતો માટે કોઈ યોજના મળી નથી.',
     speakBtn: 'બોલીને શોધો',
     pincodeLabel: 'તમારો Pin Code દાખલ કરો:',
-    goBtn: 'Go',
+    goBtn: 'જાઓ',
     voiceQuery: 'ખેડૂત લોન અને ખેતીની યોજનાઓ વિશે જણાવો',
     progressLabel: (checked: number, total: number) => checked + ' / ' + total + ' તૈયાર',
     eligibleBadge: '✓ પાત્ર',
@@ -771,8 +824,8 @@ const uiStrings = {
     govSchemeHelper: 'ਸਰਕਾਰੀ ਯੋਜਨਾ ਸਹਾਇਕ',
     sarkariSahayak: 'ਸਰਕਾਰੀ ਸਹਾਇਕ',
     activeConversation: 'ਚੱਲ ਰਹੀ ਗੱਲਬਾਤ',
-    farmerSearch: 'ਕਿਸਾਨ ਯੋਜਨਾ ਖੋਜ',
-    farmerSearchSub: 'ਮੈਂ ਮਹਾਰਾਸ਼ਟਰ ਤੋਂ ਇੱਕ ਕਿਸਾਨ ਹਾਂ...',
+    farmerSearch: 'ਯੋਜਨਾ ਖੋਜ',
+    farmerSearchSub: 'ਇਸ ਸਮੇਂ ਕੋਈ ਸਰਗਰਮ ਖੋਜ ਨਹੀਂ',
     whatsapp: 'WhatsApp ਤੇ ਭੇਜੋ',
     helpline: 'Helpline · 155261',
     csc: 'ਨਜ਼ਦੀਕੀ CSC ਲੱਭੋ',
@@ -780,7 +833,7 @@ const uiStrings = {
     detailedMode: 'ਵਿਸਤ੍ਰਿਤ',
     sarkaricSahayakSub: 'ਸਰਕਾਰੀ ਸਹਾਇਕ · ਸਧਾਰਨ ਮੋਡ',
     typeHere: 'ਇੱਥੇ ਲਿਖੋ ਜਾਂ ਹੇਠਾਂ ਬੋਲੋ...',
-    shareBtn: 'Share',
+    shareBtn: 'ਸ਼ੇਅਰ ਕਰੋ',
     helplineBtn: 'Helpline 155261',
     findCSC: 'ਨਜ਼ਦੀਕੀ CSC ਲੱਭੋ',
     today: 'ਅੱਜ',
@@ -808,7 +861,7 @@ const uiStrings = {
     transcribing: 'ਸਮਝ ਰਿਹਾ ਹਾਂ...',
     voiceMicError: 'ਮਾਈਕ੍ਰੋਫ਼ੋਨ ਪਹੁੰਚ ਨਹੀਂ ਮਿਲੀ। ਕਿਰਪਾ ਕਰਕੇ ਇਜਾਜ਼ਤ ਦਿਓ ਅਤੇ ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ।',
     voiceTranscribeError: 'ਆਵਾਜ਼ ਸਮਝਣ ਵਿੱਚ ਸਮੱਸਿਆ ਆਈ। ਕਿਰਪਾ ਕਰਕੇ ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ।',
-    voiceSessionExpiredError: 'ਤੁਹਾਡਾ ਸੈਸ਼ਨ ਖਤਮ ਹੋ ਗਿਆ ਹੈ। ਕਿਰਪਾ ਕਰਕੇ ਪੇਜ ਦੁਬਾਰਾ ਲੋਡ ਕਰੋ ਅਤੇ ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ।',
+    voiceSessionExpiredError: 'ਤੁਹਾਡਾ ਸੈਸ਼ਨ ਖਤਮ ਹੋ ਗਿਆ ਹੈ। ਕਿਰਪਾ ਕਰਕੇ ਦੁਬਾਰਾ ਲੌਗਇਨ ਕਰੋ।',
     voiceEmptyError: 'ਕੁਝ ਸੁਣਾਈ ਨਹੀਂ ਦਿੱਤਾ। ਕਿਰਪਾ ਕਰਕੇ ਦੁਬਾਰਾ ਬੋਲੋ।',
     detectedLabel: 'ਤੁਹਾਡੀ ਗੱਲ ਤੋਂ ਸਮਝਿਆ:',
     detectedFemale: 'ਔਰਤ',
@@ -817,7 +870,7 @@ const uiStrings = {
     noRealMatches: 'ਤੁਹਾਡੀ ਜਾਣਕਾਰੀ ਲਈ ਕੋਈ ਯੋਜਨਾ ਨਹੀਂ ਮਿਲੀ।',
     speakBtn: 'ਬੋਲ ਕੇ ਖੋਜੋ',
     pincodeLabel: 'ਆਪਣਾ Pin Code ਪਾਓ:',
-    goBtn: 'Go',
+    goBtn: 'ਜਾਓ',
     voiceQuery: 'ਕਿਸਾਨ ਕਰਜ਼ੇ ਅਤੇ ਖੇਤੀ ਦੀਆਂ ਯੋਜਨਾਵਾਂ ਬਾਰੇ ਦੱਸੋ',
     progressLabel: (checked: number, total: number) => checked + ' / ' + total + ' ਤਿਆਰ',
     eligibleBadge: '✓ ਯੋਗ',
@@ -1599,6 +1652,12 @@ const schemeData: Record<SchemeCategory, SchemeItem[]> = {
       stepsMr: ['kviconline.gov.in वर जा', 'PMEGP अर्ज भरा', 'प्रकल्प अहवाल तयार करा', 'DIC कार्यालयात सबमिट करा', 'बँक मुलाखतीनंतर कर्ज आणि अनुदान मिळेल'],
     },
   ],
+  // Deliberately empty, not a fabricated generic list — this bucket exists
+  // for "no specific category applies," not "here are some schemes anyway."
+  // The real scheme cards always come from realResults (the actual backend
+  // match); this only affects the WhatsApp-share text fallback that's used
+  // when a share happens before any real search has run.
+  general: [],
 };
 
 const documentData = {
@@ -1644,6 +1703,16 @@ const documentData = {
     { id: 'business_reg', nameHindi: 'व्यापार प्रमाण', nameEnglish: 'Business Registration / Udyam', nameMr: 'व्यवसाय नोंदणी / उद्यम', tip: 'Udyam Aadhar या Municipal Trade Licence', tipEnglish: 'Udyam Aadhaar or Municipal Trade Licence', tipMr: 'उद्यम आधार किंवा महानगरपालिका व्यापार परवाना', imgSrc: '/docs/doc-business-registration.jpg', fallbackColor: '#0369A1', required: false },
     { id: 'photo', nameHindi: 'पासपोर्ट फोटो', nameEnglish: 'Passport Size Photos', nameMr: 'पासपोर्ट फोटो', tip: '2 हाल की पासपोर्ट साइज़ फोटो', tipEnglish: '2 recent passport size photos', tipMr: '2 अलीकडील पासपोर्ट साईज फोटो', imgSrc: '/docs/doc-passport-photo.jpg', fallbackColor: '#0F766E', required: true },
   ],
+  // Generic documents common across most central schemes — shown when the
+  // matched scheme's category doesn't map to any of the more specific
+  // buckets above. Deliberately not farmer-specific (no land records) and
+  // not tied to any one occupation/beneficiary group.
+  general: [
+    { id: 'aadhaar', nameHindi: 'आधार कार्ड', nameEnglish: 'Aadhaar Card', nameMr: 'आधार कार्ड', tip: 'नाम सभी कागज़ों से मेल खाना चाहिए', tipEnglish: 'Name must match all your documents', tipMr: 'नाव सर्व कागदपत्रांशी जुळावे', imgSrc: '/docs/doc-aadhaar.jpg', fallbackColor: '#1565C0', required: true },
+    { id: 'passbook', nameHindi: 'बैंक पासबुक', nameEnglish: 'Bank Passbook', nameMr: 'बँक पासबुक', tip: 'आधार इस खाते से लिंक होना चाहिए', tipEnglish: 'Aadhaar must be linked to this account', tipMr: 'आधार या खात्याशी जोडलेले असावे', imgSrc: '/docs/doc-bank-passbook.jpg', fallbackColor: '#1A6B3C', required: true },
+    { id: 'income', nameHindi: 'आय प्रमाण पत्र', nameEnglish: 'Income Certificate', nameMr: 'उत्पन्नाचा दाखला', tip: 'ज़्यादातर योजनाओं के लिए ज़रूरी — तहसील से लें', tipEnglish: 'Required for most schemes — get it from Tehsil office', tipMr: 'बहुतांश योजनांसाठी आवश्यक — तहसील कार्यालयातून घ्या', imgSrc: '/docs/doc-income-certificate.jpg', fallbackColor: '#854D0E', required: false },
+    { id: 'photo', nameHindi: 'पासपोर्ट फोटो', nameEnglish: 'Passport Size Photos', nameMr: 'पासपोर्ट फोटो', tip: '2 से 4 हाल की फोटो', tipEnglish: '2 to 4 recent photos', tipMr: '2 ते 4 अलीकडील फोटो', imgSrc: '/docs/doc-passport-photo.jpg', fallbackColor: '#0F766E', required: true },
+  ],
 };
 
 function getDocName(doc: DocumentItem, lang: UiLang): string {
@@ -1688,6 +1757,13 @@ const visitScripts = {
     marathi: 'नमस्कार। मला Mudra Loan साठी apply करायचे आहे. माझा लहान व्यवसाय आहे. कृपया process सांगा.',
     english: 'Hello. I want to apply for Mudra Loan. I have a small business. Please explain the process.',
   },
+  // No specific scheme/occupation claim — used when the matched scheme
+  // doesn't map to any of the more specific buckets above.
+  general: {
+    hindi: 'नमस्ते। मुझे एक सरकारी योजना के लिए आवेदन करने में मदद चाहिए। कृपया प्रक्रिया समझाएं।',
+    marathi: 'नमस्कार। मला एका सरकारी योजनेसाठी अर्ज करण्यास मदत हवी आहे. कृपया प्रक्रिया समजावून सांगा.',
+    english: 'Hello. I need help applying for a government scheme. Please explain the process.',
+  },
 };
 
 const docLocationMap: Record<string, Record<DocCheckLang, string>> = {
@@ -1709,16 +1785,25 @@ const docLocationMap: Record<string, Record<DocCheckLang, string>> = {
 
 type DocumentItem = (typeof documentData)[SchemeCategory][number];
 
-function getSchemesForQuery(query: string): SchemeCategory {
-  const q = query.toLowerCase();
-  if (q.includes('किसान') || q.includes('kisan') || q.includes('farmer') || q.includes('खेती') || q.includes('fasal') || q.includes('फसल') || q.includes('किसान कर्ज़') || q.includes('शेतकरी') || q.includes('शेती')) return 'farmer';
-  if (q.includes('महिला') || q.includes('women') || q.includes('woman') || q.includes('widow') || q.includes('विधवा') || q.includes('beti') || q.includes('maternity') || q.includes('घरासाठी') || q.includes('मुलगी')) return 'women';
-  if (q.includes('student') || q.includes('छात्र') || q.includes('पढ़ाई') || q.includes('scholarship') || q.includes('शिक्षा') || q.includes('education') || q.includes('बच्चों की पढ़ाई') || q.includes('विद्यार्थी') || q.includes('शिक्षण') || q.includes('मुलांचे')) return 'student';
-  if (q.includes('घर') || q.includes('housing') || q.includes('awas') || q.includes('home') || q.includes('makaan') || q.includes('घर की मदद') || q.includes('घरासाठी मदत')) return 'housing';
-  if (q.includes('pension') || q.includes('पेंशन') || q.includes('बुज़ुर्ग') || q.includes('senior') || q.includes('old age') || q.includes('ज्येष्ठ') || q.includes('वृद्ध')) return 'senior';
-  if (q.includes('business') || q.includes('loan') || q.includes('mudra') || q.includes('कर्ज़') || q.includes('उद्योग') || q.includes('कर्ज') || q.includes('व्यवसाय')) return 'business';
-  if (q.includes('दवाइयाँ') || q.includes('health') || q.includes('hospital') || q.includes('ayushman') || q.includes('इलाज') || q.includes('औषध') || q.includes('आरोग्य')) return 'senior';
-  return 'farmer';
+// Which document checklist / CSC-visit script to show is now driven by the
+// REAL matched scheme's own `category` field (from GET /schemes/{code}),
+// never by re-guessing an occupation from the user's raw sentence — that
+// guessing is exactly what used to default every unmatched query (e.g. "I
+// am a 21 year old girl", which contains none of the old keyword lists) to
+// 'farmer'. Most published schemes currently have no `category` set at all
+// on the backend (data-quality gap, not something to paper over here) —
+// those honestly fall through to 'general' rather than being forced into
+// one of the specific buckets.
+function deriveDocCategory(backendCategory: string | null | undefined): SchemeCategory {
+  const c = (backendCategory ?? '').toLowerCase();
+  if (!c) return 'general';
+  if (c.includes('agri') || c.includes('farm') || c.includes('kisan')) return 'farmer';
+  if (c.includes('hous') || c.includes('awas') || c.includes('rural dev')) return 'housing';
+  if (c.includes('educat') || c.includes('skill') || c.includes('student') || c.includes('scholarship')) return 'student';
+  if (c.includes('business') || c.includes('msme') || c.includes('entrepreneur') || c.includes('employment') || c.includes('livelihood')) return 'business';
+  if (c.includes('women') || c.includes('girl') || c.includes('child')) return 'women';
+  if (c.includes('senior') || c.includes('pension') || c.includes('elderly') || c.includes('old age')) return 'senior';
+  return 'general';
 }
 
 type AddMsgFn = (msg: Omit<Message, 'id'> & { id?: number }) => void;
@@ -1889,7 +1974,7 @@ function DocCheckCard({
   resp: typeof botResponses[UiLang];
   lang: UiLang;
 }) {
-  const docs = documentData[category] || documentData.farmer;
+  const docs = documentData[category] || documentData.general;
   const checkedCount = Object.values(docCheckState).filter((v) => v === 'yes').length;
   const totalCount = docs.length;
   const progressPct = totalCount > 0 ? Math.round((checkedCount / totalCount) * 100) : 0;
@@ -1902,7 +1987,7 @@ function DocCheckCard({
   };
 
   const scriptText =
-    visitScripts[category]?.[scriptLang] ?? visitScripts.farmer.hindi;
+    visitScripts[category]?.[scriptLang] ?? visitScripts.general.hindi;
 
   // Document Readiness Check (OCR-based) — layered on top of the existing Yes/No checklist above.
   const [readinessResults, setReadinessResults] = useState<Partial<Record<string, DocumentReadinessResult>>>({});
@@ -2080,7 +2165,7 @@ function DocCheckCard({
                     type="button"
                     className="w-full bg-[#25D366] text-white rounded-lg py-2 text-[12px] font-bold border-none cursor-pointer flex items-center justify-center gap-1.5"
                     onClick={() => {
-                      const script = visitScripts[category]?.[scriptLang] ?? visitScripts.farmer.hindi;
+                      const script = visitScripts[category]?.[scriptLang] ?? visitScripts.general.hindi;
                       window.open(`https://wa.me/?text=${encodeURIComponent(script)}`, '_blank');
                     }}
                   >
@@ -2147,27 +2232,45 @@ function resolveUiLang(code: string): UiLang {
   return (KNOWN_UI_LANGS as readonly string[]).includes(code) ? (code as UiLang) : 'hi-IN';
 }
 
-function Waveform({ isRecording }: { isRecording: boolean }) {
+function Waveform({ isRecording, isTranscribing }: { isRecording: boolean; isTranscribing?: boolean }) {
   const bars = [8, 12, 18, 24, 18, 12, 8, 14];
+  // Three distinct looks, not two: green+fast while actually listening,
+  // orange+slower while the (CPU-bound, can genuinely take several seconds
+  // for longer audio) transcription is running, dim gray at idle. Without
+  // the middle state this strip goes flat gray the instant recording stops
+  // and stays that way for however long transcription takes — reading as
+  // "did this freeze?" rather than "still working."
+  const color = isRecording ? '#1A6B3C' : isTranscribing ? '#E8690B' : '#E7E0D8';
+  const durationS = isRecording ? 1 : isTranscribing ? 1.6 : 1;
   return (
     <div className="flex items-center gap-1">
-      {bars.map((h, i) => (
-        <div
-          key={`wave-${h}-${i}`}
-          className="w-[3px] rounded-[3px] animate-[waveScale_1s_ease-in-out_infinite_alternate]"
-          style={{ 
-            height: `${h}px`, 
-            animationDelay: `${[0, 0.1, 0.2, 0.3, 0.4, 0.3, 0.2, 0.1][i]}s`, 
-            backgroundColor: isRecording ? '#1A6B3C' : '#E7E0D8' 
-          }}
-        />
-      ))}
+      {bars.map((h, i) => {
+        const delay = [0, 0.1, 0.2, 0.3, 0.4, 0.3, 0.2, 0.1][i];
+        return (
+          <div
+            key={`wave-${h}-${i}`}
+            className="w-[3px] rounded-[3px]"
+            style={{
+              height: `${h}px`,
+              backgroundColor: color,
+              // Delay folded into the single `animation` shorthand instead
+              // of a separate animationDelay property — mixing shorthand
+              // and non-shorthand for the same CSS value on one element
+              // triggers a React dev warning ("conflicting property").
+              animation: (isRecording || isTranscribing)
+                ? `waveScale ${durationS}s ease-in-out ${delay}s infinite alternate`
+                : 'none',
+            }}
+          />
+        );
+      })}
     </div>
   );
 }
 
 export default function SimpleModePage() {
   const router = useRouter();
+  const { isAuthenticated, logout } = useAuth();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const msgIdRef = useRef(0);
 
@@ -2249,7 +2352,7 @@ export default function SimpleModePage() {
 
   const latestCategory = useMemo(() => {
     const lastSchemes = [...messages].reverse().find((m) => m.type === 'schemes' && m.category);
-    return (lastSchemes?.category as SchemeCategory | undefined) ?? 'farmer';
+    return (lastSchemes?.category as SchemeCategory | undefined) ?? 'general';
   }, [messages]);
 
   const latestRealResults = useMemo(() => {
@@ -2273,17 +2376,15 @@ export default function SimpleModePage() {
   }, []);
 
   const startGreeting = useCallback(() => {
+    // No `text` frozen in here on purpose — greetingPart tells the renderer
+    // which greeting line this is, and it looks the actual words up live
+    // from whatever language is selected at render time (see below).
     const t1 = setTimeout(() => {
-      const lang = resolveUiLang(selectedLangRef.current);
-      const g = greetings[lang];
-      const msg1 = { type: 'bot' as const, isHindi: true, text: g.msg1, timestamp: getTime() };
+      const msg1 = { type: 'bot' as const, isHindi: true, greetingPart: 1 as const, timestamp: getTime() };
       setMessages((prev) => [...prev, { ...msg1, id: nextId() }]);
     }, 600);
     const t2 = setTimeout(() => {
-      const lang = resolveUiLang(selectedLangRef.current);
-      const g = greetings[lang];
-      const msg2text = g.msg2;
-      const msg2 = { type: 'bot' as const, text: msg2text, showChips: true, timestamp: getTime() };
+      const msg2 = { type: 'bot' as const, greetingPart: 2 as const, showChips: true, timestamp: getTime() };
       setMessages((prev) => [...prev, { ...msg2, id: nextId() }]);
       setConversationStage('waiting');
     }, 1400);
@@ -2343,15 +2444,27 @@ export default function SimpleModePage() {
   addMsg({ type: 'user', text: trimmed, timestamp: getTime() })
   setIsTyping(true)
 
-  // category still drives the (separate) document-readiness checklist —
-  // that flow is scoped by document type, not by which real schemes match.
-  const category = getSchemesForQuery(trimmed)
-  setDocCheckCategory(category)
   const voiceLang = toVoiceLanguage(selectedLangRef.current)
 
   searchSchemesFromVoiceText(trimmed, voiceLang, 10)
-    .then((data) => {
+    .then(async (data) => {
       const results = data.results
+
+      // The document checklist / CSC-visit script category comes from the
+      // REAL top-matched scheme's own category field, not from re-guessing
+      // an occupation out of the user's sentence — see deriveDocCategory's
+      // comment for why. scheme_id here is the scheme_code (not a UUID),
+      // matching what GET /schemes/{scheme_id} expects.
+      let category: SchemeCategory = 'general'
+      if (results[0]) {
+        try {
+          const detail = await apiGetScheme(results[0].scheme_id, voiceLang)
+          category = deriveDocCategory(detail.category)
+        } catch {
+          category = 'general'
+        }
+      }
+      setDocCheckCategory(category)
 
       setTimeout(() => {
         setIsTyping(false)
@@ -2363,7 +2476,12 @@ export default function SimpleModePage() {
       setTimeout(() => {
         addMsg({ type: 'schemes', category, realResults: results, parsedProfile: data.parsed_profile, timestamp: getTime() })
         const lang = selectedLangRef.current as UiLang;
-        const names = results.slice(0, 3).map(r => r.name).join(', ');
+        // Read out up to the top 6 matches (not just 3) — this is the only
+        // place the scheme results themselves get spoken; if it's cut short
+        // the voice flow reads as if it skipped straight past the results
+        // to the next section (document prep / CSC locator) without ever
+        // saying what was found.
+        const names = results.slice(0, 6).map(r => r.name).join(', ');
         const summaryTexts: Record<UiLang, string> = {
           'hi-IN': results.length ? `आपके लिए ${results.length} योजनाएं मिलीं: ${names}` : 'माफ़ कीजिए, आपकी जानकारी के लिए कोई योजना नहीं मिली।',
           'mr-IN': results.length ? `तुमच्यासाठी ${results.length} योजना सापडल्या: ${names}` : 'माफ करा, तुमच्या माहितीसाठी कोणतीही योजना सापडली नाही.',
@@ -2487,12 +2605,27 @@ export default function SimpleModePage() {
           // TEMP DEBUG — remove after C1 verification.
           console.log('[voice-debug] transcribe threw:', err instanceof ApiError ? `ApiError status=${err.status} detail=${JSON.stringify(err.detail)}` : String(err));
           const currentUi = uiStrings[resolveUiLang(selectedLangRef.current)];
-          // A 401/403 here means the session token expired, not that the
-          // audio was unintelligible — showing "could not understand you"
-          // for an auth failure sends the user retrying something that will
-          // never succeed no matter how clearly they speak.
+          // A 401/403 here means the access token was rejected — but Simple
+          // Mode never requires login (see landing page "speak in your
+          // language" entry point), so almost every user hitting this path
+          // was never logged in at all. Telling a guest "your session
+          // expired, reload the page" is both false (they had no session)
+          // and destructive (reloading wipes the conversation and resets
+          // the language picker). Only show the real session-expired
+          // message — and only send them to actually re-authenticate,
+          // instead of a dead-end "reload" instruction — when they really
+          // were logged in (isAuthenticated true). Otherwise this is just a
+          // transient backend/auth-config hiccup from the app's own
+          // internals, not something the user did, so it gets the same
+          // generic retry message as any other transcription failure.
           if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
-            setVoiceError(currentUi.voiceSessionExpiredError ?? 'Your session expired. Please reload the page and try again.');
+            if (isAuthenticated) {
+              setVoiceError(currentUi.voiceSessionExpiredError ?? 'Your session expired. Please log in again.');
+              logout();
+              setTimeout(() => router.push('/login'), 1200);
+            } else {
+              setVoiceError(currentUi.voiceTranscribeError ?? 'Could not transcribe audio. Please try again.');
+            }
           } else {
             setVoiceError(currentUi.voiceTranscribeError ?? 'Could not transcribe audio. Please try again.');
           }
@@ -2509,7 +2642,7 @@ export default function SimpleModePage() {
       const currentUi = uiStrings[resolveUiLang(selectedLangRef.current)];
       setVoiceError(currentUi.voiceMicError ?? 'Microphone access denied. Please allow microphone access and try again.');
     }
-  }, [handleSend]);
+  }, [handleSend, isAuthenticated, logout, router]);
 
   const ui = uiStrings[selectedLang as UiLang] || uiStrings['hi-IN'];
   const lang = resolveUiLang(selectedLang);
@@ -2523,29 +2656,33 @@ export default function SimpleModePage() {
   };
 
   const handleLanguageChange = (newLang: string) => {
-    window.speechSynthesis?.cancel();
+    stopSpeaking();
     setSelectedLang(newLang);
     selectedLangRef.current = newLang;
-    setMessages([]);
-    setConversationStage('greeting');
-    setIsTyping(false);
-    setInputText('');
-    setExpandedCard(null);
-    setDocCheckState({});
-    setDocCheckCategory('');
-    setShowPincodeInput(false);
-    setPincodeText('');
-    // Speak the greeting in the language the user just picked, right here —
-    // this IS the user gesture (a <select> change), so it's not subject to
-    // autoplay-blocking the way a page-load-time speak() would be. Also mark
-    // the greeting as "spoken" so the window-level first-interaction unlock
-    // below doesn't fire a second, redundant greeting in a stale language.
-    hasSpokenGreetingRef.current = true;
-    const newUiLang = resolveUiLang(newLang);
-    const newGreeting = greetings[newUiLang];
-    speak(newGreeting.msg1, newUiLang);
-    setTimeout(() => speak(newGreeting.msg2, newUiLang), 2800);
-    setTimeout(() => startGreeting(), 300);
+
+    // The greeting bubbles' TEXT updates on its own — they look themselves
+    // up live from `selectedLang` at render time (see `bubbleText` above),
+    // so there's nothing to do here for that part, and no need to re-add
+    // them via startGreeting() either. AUDIO doesn't "live update" the same
+    // way — once a line has been spoken, it's spoken — so as long as the
+    // user hasn't actually started a real conversation yet (sent a message
+    // of their own), re-announce the greeting out loud in the language they
+    // just picked. Once a real conversation is underway, leave it alone
+    // entirely — switching language mid-conversation must not interrupt or
+    // rewrite anything the user already said or received.
+    const hasUserMessage = messages.some((m) => m.type === 'user');
+    if (!hasUserMessage) {
+      // This IS the user gesture (a <select> change), so it's not subject
+      // to autoplay-blocking the way a page-load-time speak() would be.
+      // Also mark the greeting as "spoken" so the window-level
+      // first-interaction unlock below doesn't fire a second, redundant
+      // greeting in a stale language.
+      hasSpokenGreetingRef.current = true;
+      const newUiLang = resolveUiLang(newLang);
+      const newGreeting = greetings[newUiLang];
+      speak(newGreeting.msg1, newUiLang);
+      setTimeout(() => speak(newGreeting.msg2, newUiLang), 2800);
+    }
   };
 
   return (
@@ -2591,8 +2728,16 @@ export default function SimpleModePage() {
 
           <div className="text-[9px] uppercase text-[rgba(255,255,255,0.4)] tracking-[0.08em] mb-1.5">{ui.activeConversation}</div>
           <div className="bg-[rgba(255,255,255,0.12)] rounded-[8px] py-[9px] px-[11px]">
-            <div className="text-[12px] font-bold text-white">{ui.farmerSearch}</div>
-            <div className="text-[10px] text-[rgba(255,255,255,0.55)] mt-0.5">{ui.farmerSearchSub}</div>
+            {/* Reflects the actual conversation once one exists — the
+                scheme name is whatever real backend match was found, the
+                subtitle is the user's own words, never a canned "farmer
+                from Maharashtra" placeholder. */}
+            <div className="text-[12px] font-bold text-white">
+              {latestRealResults[0]?.name ?? ui.farmerSearch}
+            </div>
+            <div className="text-[10px] text-[rgba(255,255,255,0.55)] mt-0.5">
+              {messages.find((m) => m.type === 'user')?.text ?? ui.farmerSearchSub}
+            </div>
           </div>
         </div>
 
@@ -2715,7 +2860,7 @@ export default function SimpleModePage() {
             className="w-[30px] h-[30px] rounded-full border-none cursor-pointer flex items-center justify-center transition-all duration-200 bg-[rgba(255,255,255,0.1)] shrink-0"
             onClick={() => {
               setAutoSpeak((v) => !v);
-              window.speechSynthesis.cancel();
+              stopSpeaking();
             }}
             aria-label={autoSpeak ? 'Mute voice' : 'Enable voice'}
           >
@@ -2959,7 +3104,7 @@ export default function SimpleModePage() {
                           className="flex-1 bg-[#1A6B3C] text-white rounded-[9px] py-2.5 text-[13px] font-bold border-none cursor-pointer"
                           onClick={() => {
                             const initialState: Record<string, DocCheckStatus> = {};
-                            const docs = documentData[msg.category!] || documentData.farmer;
+                            const docs = documentData[msg.category!] || documentData.general;
                             docs.forEach((d) => {
                               initialState[d.id] = 'unchecked';
                             });
@@ -3010,6 +3155,15 @@ export default function SimpleModePage() {
               );
             }
 
+            // Greeting bubbles have no frozen `text` — look the words up
+            // live from the currently-selected language so they actually
+            // switch when the user changes the dropdown, instead of being
+            // stuck in whatever language was active the moment they first
+            // appeared (600ms/1400ms after mount, almost always the default).
+            const bubbleText = message.greetingPart
+              ? (greetings[resolveUiLang(selectedLang)] || greetings['hi-IN'])[message.greetingPart === 1 ? 'msg1' : 'msg2']
+              : message.text;
+
             return (
               <div key={message.id} className="self-start">
                 <div className="flex items-end gap-1.5">
@@ -3024,7 +3178,7 @@ export default function SimpleModePage() {
                       message.isHindi ? 'border-l-[3px] border-l-[#1A6B3C] text-[#1A6B3C] font-bold text-[15px]' : ''
                     }`}
                   >
-                    {message.text}
+                    {bubbleText}
                   </div>
                 </div>
                 <div className="pl-[34px] text-[9px] text-[#A8A29E] mt-1">{message.timestamp}</div>
@@ -3114,7 +3268,7 @@ export default function SimpleModePage() {
                   setDocCheckCategory('');
                   setShowPincodeInput(false);
                   setPincodeText('');
-                  window.speechSynthesis.cancel();
+                  stopSpeaking();
                   setTimeout(() => startGreeting(), 400);
                 }}
               >
@@ -3153,11 +3307,13 @@ export default function SimpleModePage() {
           </div>
 
           <div className="pt-1 pb-2.5 px-5 flex items-center justify-center gap-4">
-            <Waveform isRecording={isRecording} />
+            <Waveform isRecording={isRecording} isTranscribing={isTranscribing} />
 
             <button
               disabled={isTranscribing}
-              className={`w-12 h-12 rounded-full border-none flex items-center justify-center animate-[micPulse_2.5s_ease-in-out_infinite] disabled:opacity-60 disabled:cursor-wait ${
+              className={`w-12 h-12 rounded-full border-none flex items-center justify-center disabled:cursor-wait ${
+                isTranscribing ? '' : 'animate-[micPulse_2.5s_ease-in-out_infinite]'
+              } ${
                 isRecording ? 'bg-[#DC2626]' : 'bg-[#E8690B]'
               } ${isTranscribing ? '' : 'cursor-pointer'}`}
               onClick={() => {
@@ -3168,14 +3324,26 @@ export default function SimpleModePage() {
                 startRecording();
               }}
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-                <rect x="9" y="2" width="6" height="11" rx="3" />
-                <path d="M5 10a7 7 0 0014 0" />
-                <line x1="12" y1="19" x2="12" y2="22" />
-              </svg>
+              {isTranscribing ? (
+                // Spinning ring instead of the static mic glyph — a still
+                // icon next to "Understanding..." for several seconds (CPU
+                // transcription is inherently that slow, see
+                // voice_service.py's timing log) reads as frozen/broken;
+                // a moving spinner reads as "still working."
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="animate-spin">
+                  <circle cx="12" cy="12" r="9" stroke="rgba(255,255,255,0.35)" strokeWidth="3" />
+                  <path d="M21 12a9 9 0 0 0-9-9" stroke="white" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                  <rect x="9" y="2" width="6" height="11" rx="3" />
+                  <path d="M5 10a7 7 0 0014 0" />
+                  <line x1="12" y1="19" x2="12" y2="22" />
+                </svg>
+              )}
             </button>
 
-            <Waveform isRecording={isRecording} />
+            <Waveform isRecording={isRecording} isTranscribing={isTranscribing} />
           </div>
 
           <div className="text-center text-[11px] font-bold text-[#57534E] -mt-1">

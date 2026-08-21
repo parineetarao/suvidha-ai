@@ -35,6 +35,11 @@ export interface ApplicationDetail extends ApplicationOut {
   status_history: StatusHistoryEntry[]
 }
 
+export interface LetterOut {
+  letter_text: string
+  pdf_url: string | null
+}
+
 export function createApplication(schemeId: string): Promise<ApplicationOut> {
   return apiPost<ApplicationOut>("/applications", { scheme_id: schemeId })
 }
@@ -56,4 +61,13 @@ export function updateApplication(
 
 export function deleteApplication(id: string): Promise<void> {
   return apiDelete(`/applications/${id}`)
+}
+
+// Only legal from "docs_pending" (see application_service.TRANSITIONS) and
+// only advances the state machine once — a second call for the same
+// application will 400 (InvalidTransition), since "letter_generated" isn't
+// a valid target from itself. Callers must cache the returned letter_text
+// client-side rather than calling this twice.
+export function generateLetter(id: string): Promise<LetterOut> {
+  return apiPost<LetterOut>(`/applications/${id}/generate-letter`)
 }
