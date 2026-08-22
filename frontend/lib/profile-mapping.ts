@@ -70,6 +70,9 @@ export function toProfilePutPayload(data: ProfileData) {
       institutionName: data.institutionName || undefined,
       farmerCategory: data.farmerCategory || undefined,
       surveyNumber: data.surveyNumber || undefined,
+      course: data.course || undefined,
+      yearOfStudy: data.yearOfStudy || undefined,
+      marksOrPercentage: data.marksOrPercentage || undefined,
     },
   }
 }

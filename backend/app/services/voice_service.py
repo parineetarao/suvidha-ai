@@ -21,6 +21,7 @@ import logging
 import math
 import os
 import tempfile
+import time
 from threading import Lock
 
 from faster_whisper import WhisperModel
@@ -88,9 +89,11 @@ class VoiceService:
 
         tmp_path = None
         try:
+            write_start = time.perf_counter()
             with tempfile.NamedTemporaryFile(suffix=".audio", delete=False) as tmp:
                 tmp.write(audio_bytes)
                 tmp_path = tmp.name
+            write_elapsed = time.perf_counter() - write_start
 
             # vad_filter=False (faster-whisper's own default) is explicit here
             # on purpose: VAD silence-trimming was investigated as a possible
@@ -98,8 +101,10 @@ class VoiceService:
             # was never enabled — but the flag is pinned so nobody re-enables
             # it later assuming it's a safe default without re-checking
             # against short, pause-heavy citizen speech first.
+            decode_start = time.perf_counter()
             segments, info = self._model.transcribe(tmp_path, language=language, vad_filter=False)
             segments = list(segments)  # faster-whisper returns a lazy generator
+            decode_elapsed = time.perf_counter() - decode_start
 
             text = " ".join(segment.text.strip() for segment in segments).strip()
 
@@ -111,6 +116,19 @@ class VoiceService:
                 confidence = round(math.exp(avg_logprob), 4)
             else:
                 confidence = 0.0
+
+            # realtime_factor = how many seconds of CPU decode per second of
+            # audio — e.g. 3.0x means a 5s clip takes 15s to transcribe. This
+            # is the number that actually explains STT-vs-TTS latency: it's
+            # inherent to running the "small" Whisper model on CPU (int8),
+            # not a bug, but logging it here (instead of just the raw
+            # seconds) makes that provable rather than assumed on every call.
+            realtime_factor = (decode_elapsed / info.duration) if info.duration else 0.0
+            logger.info(
+                "voice_service.transcribe timing: audio_bytes=%d tmpfile_write=%.3fs "
+                "whisper_decode=%.3fs audio_duration=%.2fs realtime_factor=%.2fx lang=%s",
+                len(audio_bytes), write_elapsed, decode_elapsed, info.duration, realtime_factor, language,
+            )
 
             return {
                 "text": text,

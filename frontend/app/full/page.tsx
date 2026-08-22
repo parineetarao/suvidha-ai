@@ -1,27 +1,38 @@
 'use client'
 
-import React, { Suspense, useState, useEffect, useCallback } from 'react'
+import React, { Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import Image from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { S, g, gf, type Lang } from '@/lib/strings'
-import type { DocumentType, DocumentReadinessResult, RequiredDocumentRef, NameComparison } from '@/lib/document-readiness/types'
+import { S, g, gf, type Lang, type Str } from '@/lib/strings'
+import type { DocumentType, DocumentReadinessResult, RequiredDocumentRef, NameComparison, DocLang } from '@/lib/document-readiness/types'
 import { DR, drt } from '@/lib/document-readiness/translations'
 import { compareNames } from '@/lib/document-readiness/name-matching'
 import { computeReadinessScore } from '@/lib/document-readiness/readiness-score'
 import { loadStoredResults, saveStoredResult, clearStoredResults } from '@/lib/document-readiness/storage'
 import { verifyDocument } from '@/lib/documents'
 import { getCurrentPosition, getNearbyCscs, type CSCOut } from '@/lib/csc'
+import { transcribeAudio } from '@/lib/voice'
 import { DocumentReadinessCheck } from '@/components/document-readiness/DocumentReadinessCheck'
 import { NameConsistencyCard } from '@/components/document-readiness/NameConsistencyCard'
 import { ReadinessSummary } from '@/components/document-readiness/ReadinessSummary'
 import { ApplicationPreparationForm } from '@/components/full-mode/ApplicationPreparationForm'
 import { FileCheck2, Trash2 } from 'lucide-react'
-import { apiPatch, apiPut, ApiError } from "@/lib/api-client"
+import { apiPatch, apiPut, ApiError as ApiClientError } from "@/lib/api-client"
+import { useAuth } from "@/lib/auth-context"
 import { toUserPatchPayload, toProfilePutPayload } from "@/lib/profile-mapping"
+import {
+  createApplication,
+  listApplications,
+  updateApplication,
+  generateLetter,
+  type ApplicationOut,
+  type ApplicationStatus,
+} from "@/lib/applications"
 import {
   searchSchemes as apiSearchSchemes,
   getScheme as apiGetScheme,
   compareSchemes as apiCompareSchemes,
+  listSchemes as apiListSchemes,
   ApiError,
   type ApiLanguage,
   type SchemeMatch as ApiSchemeMatch,
@@ -29,19 +40,39 @@ import {
   type MatchReason as ApiMatchReason,
 } from '@/lib/api'
 
+// Was hardcoded to only 3 outcomes (hi/mr/everything-else-as-en), matching
+// the language selector's old 3-option limit. Now that the selector below
+// offers all 10, this needs to actually map every one of them — this is
+// also the mapping voice input reuses for its lang param (see startVoice),
+// since ApiLanguage and VoiceLanguage are the same 10-code set.
+const LANG_TO_API_LANGUAGE: Record<Lang, ApiLanguage> = {
+  'en-IN': 'en', 'hi-IN': 'hi', 'mr-IN': 'mr', 'ta-IN': 'ta', 'te-IN': 'te',
+  'kn-IN': 'kn', 'ml-IN': 'ml', 'bn-IN': 'bn', 'gu-IN': 'gu', 'pa-IN': 'pa',
+}
+
 function toApiLanguage(lang: Lang): ApiLanguage {
-  if (lang === 'hi-IN') return 'hi'
-  if (lang === 'mr-IN') return 'mr'
-  return 'en'
+  return LANG_TO_API_LANGUAGE[lang] ?? 'en'
+}
+
+// The document-readiness subsystem's DocLang props are Hindi/Marathi/English
+// only by design (its own translation dictionary was never expanded to all
+// 10 — same documented scope limit Simple Mode already has). Same narrowing
+// function Simple Mode uses for the identical constraint, just operating on
+// the wider Lang type here instead of Simple Mode's local UiLang.
+function toDocCheckLang(lang: Lang): DocLang {
+  return lang === 'mr-IN' || lang === 'en-IN' ? lang : 'hi-IN'
 }
 
 type ActivePanel = 'schemes' | 'compare' | 'prep' | 'tracker' | 'csc' | 'helpline'
 type EligibilityStatus = 'eligible' | 'partial' | 'ineligible'
-type AppStatus = 'approved' | 'docs_needed' | 'pending' | 'rejected'
 
 type SchemeItem = {
   id: number
   schemeId: string
+  // Real DB UUID (Scheme.id, distinct from schemeId/scheme_code above) —
+  // only known once GET /schemes/{id} resolves (search results don't carry
+  // it). Needed to call POST /applications {scheme_id}. Empty until then.
+  dbId: string
   nameHindi: string
   nameEnglish: string
   nameMr: string
@@ -50,6 +81,12 @@ type SchemeItem = {
   headerColor: string
   ministry: string
   category: string | null
+  // Real eligibility_rules signals, carried through for getSchemeCategory()
+  // to fall back on when `category` text is empty/too vague (e.g. many
+  // real published schemes are gender:"female"-gated with no category set
+  // at all, or use a generic label like "welfare"/"employment").
+  eligibilityGender: string | null
+  eligibilityOccupations: string[]
   amount: string
   unit: string
   unitHindi: string
@@ -106,22 +143,6 @@ function getSchemeDocuments(scheme: SchemeItem, lang: Lang): string[] {
   return scheme.documents
 }
 
-type TrackerItem = {
-  id: number
-  schemeName: string
-  schemeNameHindi: string
-  schemeNameMr: string
-  logoText: string
-  logoColor: string
-  dateApplied: string
-  referenceNumber: string
-  status: AppStatus
-  nextStep: string
-  nextStepHindi: string
-  nextStepMr: string
-  borderColor: string
-}
-
 export type ProfileData = {
   fullName: string
   age: string
@@ -153,6 +174,10 @@ export type ProfileData = {
   bankName: string
   accountNumber: string
   ifscCode: string
+  // Student-category domain fields (Application Preparation Form, Part 2)
+  course: string
+  yearOfStudy: string
+  marksOrPercentage: string
 }
 
 const PALETTE = [
@@ -192,12 +217,15 @@ function matchToSchemeItem(match: ApiSchemeMatch, index: number): SchemeItem {
   return {
     id: index,
     schemeId: match.scheme_id,
+    dbId: '',
     nameHindi: name, nameEnglish: name, nameMr: name,
     logoText: name.charAt(0).toUpperCase(),
     logoColor: colors.logo,
     headerColor: colors.header,
     ministry: '',
     category: null,
+    eligibilityGender: null,
+    eligibilityOccupations: [],
     amount: '',
     unit: '', unitHindi: '', unitMr: '',
     eligibility: eligibilityFromScore(match.match_score),
@@ -234,12 +262,15 @@ function detailToSchemeItem(
   return {
     id: index,
     schemeId: detail.scheme_code,
+    dbId: detail.id,
     nameHindi: name, nameEnglish: name, nameMr: name,
     logoText: name.charAt(0).toUpperCase(),
     logoColor: colors.logo,
     headerColor: colors.header,
     ministry: detail.ministry ?? '',
     category: detail.category,
+    eligibilityGender: detail.eligibility_rules?.gender ?? null,
+    eligibilityOccupations: detail.eligibility_rules?.occupations ?? [],
     amount: detail.benefits ?? detail.description ?? '',
     unit: '', unitHindi: '', unitMr: '',
     eligibility: eligibilityFromScore(matchScore),
@@ -257,7 +288,7 @@ function detailToSchemeItem(
     documentsHindi: detail.documents_required,
     documentsMr: detail.documents_required,
     officialUrl: detail.application_url ?? detail.source_url ?? '',
-    requiredDocuments: [],
+    requiredDocuments: documentsRequiredToRefs(detail.documents_required),
     reasons,
   }
 }
@@ -267,21 +298,46 @@ const EMPTY_SCHEME: SchemeItem = matchToSchemeItem(
   0
 )
 
-const trackerData: TrackerItem[] = [
-  { id: 1, schemeName: 'PM Kisan Samman Nidhi', schemeNameHindi: 'पीएम किसान सम्मान निधि', schemeNameMr: 'पीएम किसान सन्मान निधी', logoText: 'पी', logoColor: '#1A6B3C', dateApplied: '15 Jan 2025', referenceNumber: 'PMKISAN-MH-2025-18832', status: 'approved', nextStep: 'Next installment due April 2025. Check bank account on 1st April.', nextStepHindi: 'अगली किस्त अप्रैल 2025 में देय है। 1 अप्रैल को बैंक खाता जाँचें।', nextStepMr: 'पुढील हप्ता एप्रिल 2025 मध्ये देय आहे. 1 एप्रिल रोजी बँक खाते तपासा.', borderColor: '#1A6B3C' },
-  { id: 2, schemeName: 'Ayushman Bharat PMJAY', schemeNameHindi: 'आयुष्मान भारत PMJAY', schemeNameMr: 'आयुष्मान भारत PMJAY', logoText: 'आ', logoColor: '#FF671F', dateApplied: '02 Feb 2025', referenceNumber: 'PMJAY-2025-44210', status: 'docs_needed', nextStep: 'Submit updated ration card copy at nearest CSC centre.', nextStepHindi: 'नज़दीकी CSC केंद्र पर अपडेटेड राशन कार्ड की प्रति जमा करें।', nextStepMr: 'जवळच्या CSC केंद्रात अद्ययावत रेशन कार्डची प्रत जमा करा.', borderColor: '#1565C0' },
-  { id: 3, schemeName: 'PM Awas Yojana Rural', schemeNameHindi: 'पीएम आवास योजना ग्रामीण', schemeNameMr: 'पीएम आवास योजना ग्रामीण', logoText: 'आ', logoColor: '#1565C0', dateApplied: '20 Mar 2025', referenceNumber: '', status: 'pending', nextStep: 'Survey scheduled. Keep all documents ready at home.', nextStepHindi: 'सर्वेक्षण निर्धारित है। घर पर सभी दस्तावेज़ तैयार रखें।', nextStepMr: 'सर्वेक्षण नियोजित आहे. घरी सर्व कागदपत्रे तयार ठेवा.', borderColor: '#D97706' }
-]
-
-function getTrackerName(item: TrackerItem, lang: Lang): string {
-  if (lang === 'hi-IN') return item.schemeNameHindi
-  if (lang === 'mr-IN') return item.schemeNameMr
-  return item.schemeName
+/** Generic (not scheme-specific — the backend doesn't return per-scheme
+ * guidance text) next-step copy per real ApplicationStatus, for the
+ * Tracker cards. */
+function getNextStepText(status: ApplicationStatus, lang: Lang): string {
+  const copy: Record<ApplicationStatus, Str> = {
+    draft: { 'en-IN': 'Complete your profile and required documents to continue.', 'hi-IN': 'जारी रखने के लिए अपनी प्रोफ़ाइल और आवश्यक दस्तावेज़ पूरे करें।', 'mr-IN': 'सुरू ठेवण्यासाठी तुमची प्रोफाइल आणि आवश्यक कागदपत्रे पूर्ण करा.' },
+    docs_pending: { 'en-IN': 'Upload and verify your required documents in Application Preparation.', 'hi-IN': '"आवेदन तैयारी" में अपने आवश्यक दस्तावेज़ अपलोड और सत्यापित करें।', 'mr-IN': '"अर्ज तयारी" मध्ये तुमची आवश्यक कागदपत्रे अपलोड आणि सत्यापित करा.' },
+    letter_generated: { 'en-IN': 'Print or carry your preparation document to a CSC centre to submit.', 'hi-IN': 'जमा करने के लिए अपना तैयारी दस्तावेज़ प्रिंट करें या CSC केंद्र ले जाएं।', 'mr-IN': 'सादर करण्यासाठी तुमचा तयारी दस्तऐवज प्रिंट करा किंवा CSC केंद्रात घेऊन जा.' },
+    submitted: { 'en-IN': 'Your application has been submitted and is awaiting review.', 'hi-IN': 'आपका आवेदन जमा हो चुका है और समीक्षा की प्रतीक्षा में है।', 'mr-IN': 'तुमचा अर्ज सादर झाला आहे आणि समीक्षेच्या प्रतीक्षेत आहे.' },
+    under_review: { 'en-IN': 'Your application is under review by the department.', 'hi-IN': 'आपका आवेदन विभाग द्वारा समीक्षा में है।', 'mr-IN': 'तुमचा अर्ज विभागाकडून समीक्षेत आहे.' },
+    approved: { 'en-IN': 'Your application has been approved.', 'hi-IN': 'आपका आवेदन स्वीकृत हो गया है।', 'mr-IN': 'तुमचा अर्ज मंजूर झाला आहे.' },
+    rejected: { 'en-IN': 'Your application was rejected. You can re-apply from Application Preparation.', 'hi-IN': 'आपका आवेदन अस्वीकृत हो गया। आप "आवेदन तैयारी" से दोबारा आवेदन कर सकते हैं।', 'mr-IN': 'तुमचा अर्ज नाकारला गेला. तुम्ही "अर्ज तयारी" मधून पुन्हा अर्ज करू शकता.' },
+  }
+  return g(copy[status], lang)
 }
-function getTrackerNextStep(item: TrackerItem, lang: Lang): string {
-  if (lang === 'hi-IN') return item.nextStepHindi
-  if (lang === 'mr-IN') return item.nextStepMr
-  return item.nextStep
+
+/** Real ApplicationStatus -> status pill style/label, replacing the old
+ * 4-value fake AppStatus mapping (getStatusStyle) which didn't cover the
+ * actual 7-state backend state machine (application_service.TRANSITIONS). */
+function getRealStatusStyle(s: ApplicationStatus, lang: Lang) {
+  const map: Record<ApplicationStatus, { label: string; bg: string; color: string; border: string }> = {
+    draft: { label: g(S.full.statusDraft, lang), bg: '#F4F1EC', color: '#78716C', border: '#E7E0D8' },
+    docs_pending: { label: g(S.full.statusDocsPending, lang), bg: '#EFF6FF', color: '#1D4ED8', border: '#BFDBFE' },
+    letter_generated: { label: g(S.full.statusLetterGenerated, lang), bg: '#FFF8F1', color: '#E8690B', border: '#FDE0C4' },
+    submitted: { label: g(S.full.statusSubmitted, lang), bg: '#FFFBEB', color: '#D97706', border: '#FDE68A' },
+    under_review: { label: g(S.full.statusUnderReview, lang), bg: '#FFFBEB', color: '#D97706', border: '#FDE68A' },
+    approved: { label: g(S.full.statusApproved, lang), bg: '#F0FDF4', color: '#15803D', border: '#BBF7D0' },
+    rejected: { label: g(S.full.statusRejected, lang), bg: '#FEF2F2', color: '#DC2626', border: '#FECACA' },
+  }
+  return map[s]
+}
+
+// Sequential progress through the 5 forward states before the two terminal
+// branches (approved/rejected) — used to fill in the Tracker card's stepper.
+const STATUS_STEP_ORDER: ApplicationStatus[] = ['draft', 'docs_pending', 'letter_generated', 'submitted', 'under_review']
+function getStatusStepIndex(status: ApplicationStatus): number {
+  if (status === 'approved') return STATUS_STEP_ORDER.length
+  if (status === 'rejected') return STATUS_STEP_ORDER.indexOf('under_review') + 1
+  const i = STATUS_STEP_ORDER.indexOf(status)
+  return i === -1 ? 0 : i + 1
 }
 
 const helplineData = [
@@ -305,29 +361,80 @@ function getEligibilityColor(e: EligibilityStatus): string {
   return '#DC2626'
 }
 
-function getStatusStyle(s: AppStatus, lang: Lang) {
-  const map = {
-    approved: { label: g(S.full.statusApproved, lang), bg: '#F0FDF4', color: '#15803D', border: '#BBF7D0' },
-    docs_needed: { label: g(S.full.statusDocs, lang), bg: '#EFF6FF', color: '#1D4ED8', border: '#BFDBFE' },
-    pending: { label: g(S.full.statusPending, lang), bg: '#FFFBEB', color: '#D97706', border: '#FDE68A' },
-    rejected: { label: g(S.full.statusRejected, lang), bg: '#FEF2F2', color: '#DC2626', border: '#FECACA' }
-  }
-  return map[s]
-}
-
-/** Best-effort mapping from the backend's free-text `category` field to the
- * fixed set of demo categories the Application Preparation form's sample
- * sentences are keyed on. Falls back to 'general' for unmapped/unfetched
- * schemes (search results don't carry category — only detail does). */
+/** Maps a scheme to one of the fixed buckets the Application Preparation
+ * form's Part 2 (domain-specific fields) is keyed on: farmer, housing,
+ * health, business, women, student, or general.
+ *
+ * Two-stage, audited against every distinct `category` value actually
+ * present in the real `schemes` table (agriculture, education, employment,
+ * health, housing, welfare, plus ~54/62 published schemes with no category
+ * at all — checked live via psql, not assumed):
+ *
+ * 1. Keyword-match the free-text `category` field where it's specific
+ *    enough to trust directly (e.g. "agriculture" -> farmer,
+ *    "employment"/"self-employed" -> business — real myScheme-style
+ *    category labels for loan/business schemes like PM Mudra Yojana).
+ * 2. Where `category` is empty or too generic to trust alone (empty, or
+ *    "welfare" — a label real schemes use for everything from girl-child
+ *    savings schemes to LPG connections to old-age support), fall back to
+ *    the scheme's actual `eligibility_rules` (occupations / gender), which
+ *    is real structured data already fetched for this scheme. This matters
+ *    a lot in practice: 16 real published schemes are gender:"female"-
+ *    gated, but only 2 of them have category="welfare" — the other 14 have
+ *    NO category set at all, so text-matching alone would wrongly bucket
+ *    all of them as 'general'.
+ *
+ * No "senior citizen" or "disability" bucket exists because no real
+ * published scheme currently carries a structured signal for either —
+ * eligibility_rules has no disability field at all, and zero published
+ * schemes have min_age >= 55 (checked live via psql). Inventing fields for
+ * a category with zero real backing would be guessing, not data-driven
+ * classification — if/when such data appears, this is the one function to
+ * extend.
+ */
 function getSchemeCategory(scheme: SchemeItem): string {
   const c = (scheme.category ?? '').toLowerCase()
   if (c.includes('farm') || c.includes('agri') || c.includes('कृषि')) return 'farmer'
   if (c.includes('hous') || c.includes('awas') || c.includes('rural dev')) return 'housing'
   if (c.includes('health') || c.includes('medical')) return 'health'
-  if (c.includes('business') || c.includes('finance') || c.includes('loan') || c.includes('msme')) return 'business'
+  if (c.includes('business') || c.includes('finance') || c.includes('loan') || c.includes('msme') || c.includes('employment') || c.includes('self-employ') || c.includes('entrepreneur')) return 'business'
   if (c.includes('women') || c.includes('girl')) return 'women'
   if (c.includes('student') || c.includes('educat') || c.includes('skill')) return 'student'
+
+  const occupations = scheme.eligibilityOccupations.map((o) => o.toLowerCase())
+  if (occupations.includes('farmer')) return 'farmer'
+  if (occupations.includes('student')) return 'student'
+  if (occupations.includes('business_owner') || occupations.includes('entrepreneur')) return 'business'
+  if (scheme.eligibilityGender === 'female') return 'women'
+
   return 'general'
+}
+
+/** Best-effort mapping from the backend's free-text `documents_required`
+ * strings (e.g. "Aadhaar Card", "Bank Passbook copy") to the fixed
+ * DocumentType enum the document-readiness checklist UI is built on.
+ * `labelKey` is unused by every current render path (DR.documentTypes[type]
+ * drives the visible label instead) — kept only to satisfy the interface. */
+function documentsRequiredToRefs(documents: string[]): RequiredDocumentRef[] {
+  const seen = new Set<DocumentType>()
+  const refs: RequiredDocumentRef[] = []
+  for (const raw of documents) {
+    const d = raw.toLowerCase()
+    let type: DocumentType = 'other'
+    let reasonKey = 'identityProof'
+    if (d.includes('aadhaar') || d.includes('aadhar')) { type = 'aadhaar'; reasonKey = 'identityProof' }
+    else if (d.includes('bank') || d.includes('passbook') || d.includes('account')) { type = 'bank_passbook'; reasonKey = 'directBenefitTransfer' }
+    else if (d.includes('income')) { type = 'income_certificate'; reasonKey = 'incomeProof' }
+    else if (d.includes('ration')) { type = 'ration_card'; reasonKey = 'householdProof' }
+    else if (d.includes('land') || d.includes('7/12') || d.includes('khata') || d.includes('property')) { type = 'land_record'; reasonKey = 'landOwnershipProof' }
+    else if (d.includes('caste')) { type = 'caste_certificate'; reasonKey = 'categoryProof' }
+    else if (d.includes('domicile') || d.includes('residence')) { type = 'domicile_certificate'; reasonKey = 'residenceProof' }
+    else if (d.includes('photo')) { type = 'passport_photo'; reasonKey = 'photoRequirement' }
+    if (seen.has(type)) continue
+    seen.add(type)
+    refs.push({ type, required: true, labelKey: type, reasonKey })
+  }
+  return refs
 }
 
 function FullModePageContent() {
@@ -357,19 +464,99 @@ function FullModePageContent() {
   const [cscStatus, setCscStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [cscErrorMessage, setCscErrorMessage] = useState<string | null>(null)
   const [trackerFilter, setTrackerFilter] = useState('all')
-  const [isListening, setIsListening] = useState(false)
+  // Voice input — same real backend (POST /voice/transcribe, faster-whisper)
+  // and MediaRecorder pattern as Simple Mode's startRecording, not raw
+  // browser SpeechRecognition. isRecording = mic actively capturing,
+  // isTranscribing = audio sent, waiting on the backend.
+  const [isRecording, setIsRecording] = useState(false)
+  const [isTranscribing, setIsTranscribing] = useState(false)
+  const [voiceError, setVoiceError] = useState<string | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const mediaStreamRef = useRef<MediaStream | null>(null)
+  const { user, isAuthenticated, logout } = useAuth()
   const [sortBy, setSortBy] = useState('match')
-  // Full Mode's own selector only ever offers these 3 (see the <select>
-  // below) — narrower than the app-wide Lang (10 codes, as of the landing
-  // page i18n expansion) on purpose, since it flows into the
-  // document-readiness subsystem's DocLang-typed props, which are still
-  // Hindi/Marathi/English only by design. A narrower type here is safely
-  // assignable everywhere the wider Lang is expected (g/gf calls below).
-  const [lang, setLang] = useState<'hi-IN' | 'mr-IN' | 'en-IN'>('en-IN')
+  // Widened from a 3-language ('hi-IN'|'mr-IN'|'en-IN') selector to the
+  // full app-wide Lang (10 codes) so voice input — and the search/compare
+  // API calls, which already went through toApiLanguage — can actually be
+  // used in all 10. The document-readiness subsystem's DocLang props are
+  // still Hindi/Marathi/English only by design; toDocCheckLang() (module
+  // scope, above) narrows down to that at each of those call sites
+  // instead, same pattern Simple Mode already uses for the same constraint.
+  const [lang, setLang] = useState<Lang>('en-IN')
 
   // Profile state
   const [hasProfile, setHasProfile] = useState(false)
+  const [applicationStatus, setApplicationStatus] = useState<'idle' | 'creating' | 'created' | 'exists' | 'error'>('idle')
   const [showProfileForm, setShowProfileForm] = useState(false)
+
+  // Real applications (GET /applications) — backs both the Tracker panel
+  // and the sidebar badge. schemeNamesById is a lazy cache resolved via
+  // GET /schemes/{id} since ApplicationOut only carries scheme_id, not name.
+  const [applications, setApplications] = useState<ApplicationOut[]>([])
+  const [applicationsLoading, setApplicationsLoading] = useState(false)
+  const [applicationsError, setApplicationsError] = useState<string | null>(null)
+  const [schemeNamesById, setSchemeNamesById] = useState<Record<string, string>>({})
+  // The application row tied to the currently selected scheme, once known —
+  // resolved either from a fresh createApplication() call or, for a
+  // pre-existing ('exists') application, by matching selectedScheme.dbId
+  // against the applications list. Needed to call generate-letter.
+  const [currentApplicationId, setCurrentApplicationId] = useState<string | null>(null)
+  const [letterStatus, setLetterStatus] = useState<'idle' | 'generating' | 'done' | 'error' | 'unavailable'>('idle')
+  const [letterTextByAppId, setLetterTextByAppId] = useState<Record<string, string>>({})
+  const [letterCopied, setLetterCopied] = useState(false)
+  // Mirrors `applications` for reads inside selectScheme without adding it
+  // as a dependency — selectScheme must not re-create (and re-run) every
+  // time the applications list refreshes.
+  const applicationsRef = useRef<ApplicationOut[]>([])
+  useEffect(() => { applicationsRef.current = applications }, [applications])
+
+  const refreshApplications = useCallback(async () => {
+    setApplicationsLoading(true)
+    setApplicationsError(null)
+    try {
+      const list = await listApplications()
+      setApplications(list)
+      return list
+    } catch {
+      setApplicationsError(g(S.full.trackerLoadError, lang))
+      return null
+    } finally {
+      setApplicationsLoading(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lang])
+
+  useEffect(() => {
+    refreshApplications()
+    // Only on mount — the badge/tracker refresh explicitly after actions
+    // that change the applications list (create, generate-letter).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Lazily resolve scheme names for whatever's in `applications` but not yet
+  // cached. GET /schemes/{id} can't be used here — it looks a scheme up by
+  // scheme_code (see lib/api.ts's listSchemes comment), but
+  // ApplicationOut.scheme_id is the scheme's real `id` UUID, so that lookup
+  // always 404s for an application's scheme_id. GET /schemes (list) does
+  // return `id` alongside `name`, so that's the source used instead.
+  useEffect(() => {
+    const missing = applications.some((a) => !(a.scheme_id in schemeNamesById))
+    if (!missing) return
+    let cancelled = false
+    apiListSchemes(100)
+      .then((page) => {
+        if (cancelled) return
+        setSchemeNamesById((prev) => {
+          const next = { ...prev }
+          for (const s of page.items) next[s.id] = s.name
+          return next
+        })
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applications])
   const [profileData, setProfileData] = useState<ProfileData>({
     fullName: '', age: '', state: '', occupation: '', income: '',
     land: '', landOwnership: '', aadhaarBankLinked: '',
@@ -378,7 +565,8 @@ function FullModePageContent() {
     maritalStatus: '', lpgConnection: '', girlChildAge: '',
     qualification: '', institutionName: '',
     gender: '', district: '', mobileNumber: '', farmerCategory: '',
-    landArea: '', surveyNumber: '', bankName: '', accountNumber: '', ifscCode: ''
+    landArea: '', surveyNumber: '', bankName: '', accountNumber: '', ifscCode: '',
+    course: '', yearOfStudy: '', marksOrPercentage: ''
   })
 
   // Document Readiness Check state
@@ -438,6 +626,41 @@ function FullModePageContent() {
     setHasStoredDocData(false)
   }
 
+  // POST /applications/{id}/generate-letter is only legal from
+  // "docs_pending" (application_service.TRANSITIONS); a fresh application
+  // is "draft", so this first nudges it forward with PATCH /applications/{id}
+  // when needed, then generates. The result is cached client-side
+  // (letterTextByAppId) because a second generate-letter call for the same
+  // application always 400s (letter_service.py can't transition
+  // "letter_generated" -> "letter_generated") — this is a real backend
+  // constraint, not something to work around by calling it again.
+  const handleGenerateLetter = async () => {
+    if (!currentApplicationId) return
+    if (letterTextByAppId[currentApplicationId]) return // already have it, nothing to do
+    const current = applications.find((a) => a.id === currentApplicationId)
+    // Letter text isn't persisted server-side (LetterOut is generated
+    // on-the-fly, not stored) — if this application already moved past
+    // "docs_pending" in an earlier session, generate-letter would 400
+    // (InvalidTransition) rather than return the letter again. Surface that
+    // plainly instead of firing a doomed request.
+    if (current && current.status !== 'draft' && current.status !== 'docs_pending') {
+      setLetterStatus('unavailable')
+      return
+    }
+    setLetterStatus('generating')
+    try {
+      if (current?.status === 'draft') {
+        await updateApplication(currentApplicationId, { status: 'docs_pending' })
+      }
+      const letter = await generateLetter(currentApplicationId)
+      setLetterTextByAppId((prev) => ({ ...prev, [currentApplicationId]: letter.letter_text }))
+      setLetterStatus('done')
+      refreshApplications()
+    } catch {
+      setLetterStatus('error')
+    }
+  }
+
   // Fetches full scheme detail (GET /schemes/{id}) and shows it in the right
   // panel. matchScore/reasons/warnings come from the search hit that was
   // clicked, since the detail endpoint itself doesn't return relevance data.
@@ -453,6 +676,13 @@ function FullModePageContent() {
     try {
       const detail = await apiGetScheme(schemeId, toApiLanguage(lang))
       setSelectedScheme(detailToSchemeItem(detail, index, matchScore, reasons, warnings))
+      // Switching schemes — re-resolve the application context for THIS
+      // scheme rather than carrying over whatever the previously selected
+      // scheme left behind in currentApplicationId/applicationStatus.
+      const existing = applicationsRef.current.find((a) => a.scheme_id === detail.id)
+      setCurrentApplicationId(existing?.id ?? null)
+      setApplicationStatus(existing ? 'exists' : 'idle')
+      setLetterStatus('idle')
     } catch (err) {
       setDetailError(err instanceof ApiError ? err.message : 'Failed to load scheme details.')
     } finally {
@@ -481,8 +711,16 @@ function FullModePageContent() {
     }
   }, [lang, selectScheme])
 
-  // URL param on mount
+  // URL params on mount — homepage deep-links in via ?q=, ?panel=, ?lang=
   useEffect(() => {
+    const langParam = searchParams.get('lang')
+    if (langParam && langParam in LANG_TO_API_LANGUAGE) {
+      setLang(langParam as Lang)
+    }
+    const panel = searchParams.get('panel')
+    if (panel === 'prep') {
+      setActivePanel('prep')
+    }
     const q = searchParams.get('q')
     if (q) {
       setSearchQuery(q)
@@ -587,43 +825,97 @@ function FullModePageContent() {
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank')
   }
 
-  const startVoice = () => {
-    if (typeof window === 'undefined') return
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SR) { alert(lang === 'hi-IN' ? 'इस ब्राउज़र में आवाज़ समर्थित नहीं है' : lang === 'mr-IN' ? 'या ब्राउझरमध्ये आवाज समर्थित नाही' : 'Voice not supported in this browser'); return }
-    const recognition = new SR()
-    recognition.lang = lang
-    recognition.interimResults = false
-    setIsListening(true)
-    recognition.start()
-    recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript
-      setSearchQuery(transcript)
-      setIsListening(false)
-      runSearch(transcript)
+  // Real backend voice input — same pattern as Simple Mode's
+  // startRecording/stopRecording (app/simple/page.tsx): MediaRecorder
+  // captures a webm/opus blob, POSTs it to /voice/transcribe (faster-whisper,
+  // via lib/voice.ts's transcribeAudio — the same client binding Simple Mode
+  // uses), and the transcript drives the search the same way typed text
+  // does. Deliberately NOT browser SpeechRecognition — that only reliably
+  // covers a handful of the 10 supported languages and never touches the
+  // real multilingual backend at all.
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop()
+  }
+
+  const startRecording = async () => {
+    setVoiceError(null)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      mediaStreamRef.current = stream
+      audioChunksRef.current = []
+
+      const recorder = new MediaRecorder(stream)
+      mediaRecorderRef.current = recorder
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data)
+      }
+
+      recorder.onstop = async () => {
+        mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+        mediaStreamRef.current = null
+        setIsRecording(false)
+
+        const audioBlob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
+        audioChunksRef.current = []
+
+        if (audioBlob.size === 0) {
+          setVoiceError(g(S.full.voiceEmptyError, lang))
+          return
+        }
+
+        setIsTranscribing(true)
+        try {
+          const result = await transcribeAudio(audioBlob, toApiLanguage(lang))
+          // Same confidence floor as Simple Mode: below ~0.35 the "small"
+          // CPU Whisper model tends to produce repeated-token garbage
+          // rather than a genuine low-confidence transcript — better to
+          // ask the user to retry than run a nonsense query.
+          if (result.text.trim() && result.confidence >= 0.35) {
+            setSearchQuery(result.text)
+            runSearch(result.text)
+          } else {
+            setVoiceError(g(S.full.voiceEmptyError, lang))
+          }
+        } catch (err) {
+          // A 401/403 here means the access token was rejected. Full Mode
+          // (like Simple Mode) doesn't require login to use voice search,
+          // so most of the time this is a stale dev/fallback token, not an
+          // actual session — only claim a real session expired, and send
+          // the user to re-login, when they were genuinely logged in.
+          if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+            if (isAuthenticated) {
+              setVoiceError(g(S.full.voiceSessionExpiredError, lang))
+              logout()
+              setTimeout(() => router.push('/login'), 1200)
+            } else {
+              setVoiceError(g(S.full.voiceTranscribeError, lang))
+            }
+          } else {
+            setVoiceError(g(S.full.voiceTranscribeError, lang))
+          }
+        } finally {
+          setIsTranscribing(false)
+        }
+      }
+
+      recorder.start()
+      setIsRecording(true)
+    } catch {
+      setVoiceError(g(S.full.voiceMicError, lang))
     }
-    recognition.onerror = () => setIsListening(false)
-    recognition.onend = () => setIsListening(false)
+  }
+
+  const startVoice = () => {
+    if (isRecording) {
+      stopRecording()
+      return
+    }
+    startRecording()
   }
 
   const updateProfile = (field: keyof ProfileData, value: string) => {
     setProfileData(prev => ({ ...prev, [field]: value }))
-  }
-
-  const useDemoProfile = () => {
-    setProfileData({
-      fullName: 'Rajesh Patil', age: '45', state: 'Maharashtra',
-      occupation: 'Farmer', income: '< ₹1.5L/year', land: '2 acres',
-      landOwnership: 'owned', aadhaarBankLinked: 'yes',
-      currentHouse: 'kutcha', bplCard: 'yes', familySize: '4',
-      rationCardType: 'BPL', businessType: '', businessAge: '',
-      existingLoan: 'no', maritalStatus: 'married', lpgConnection: 'no',
-      girlChildAge: '', qualification: '', institutionName: '',
-      gender: 'male', district: 'Pune', mobileNumber: '9876543210',
-      farmerCategory: 'small', landArea: '2', surveyNumber: '214/2A',
-      bankName: 'State Bank of India', accountNumber: '20394857612', ifscCode: 'SBIN0001234',
-    })
-    setShowProfileForm(true)
   }
 
   const schemeCategory = getSchemeCategory(selectedScheme)
@@ -633,28 +925,28 @@ function FullModePageContent() {
   const categoryContext =
     lang === 'hi-IN' ? (
       schemeCategory === 'farmer' ? `मेरे नाम पर ${profileData.land || 'कृषि भूमि'} दर्ज है।` :
-      schemeCategory === 'housing' ? `मैं वर्तमान में एक ${profileData.currentHouse || 'कच्चे'} घर में रहता/रहती हूँ। मेरे परिवार में ${profileData.familySize || 'कई'} सदस्य हैं। भारत में कहीं भी मेरा कोई पक्का घर नहीं है।` :
-      schemeCategory === 'health' ? `मेरे परिवार में ${profileData.familySize || 'कई'} सदस्य हैं। हमारे पास ${profileData.rationCardType || 'BPL'} राशन कार्ड है।` :
-      schemeCategory === 'business' ? `मैं ${profileData.businessAge ? `पिछले ${profileData.businessAge} से` : ''} एक ${profileData.businessType || 'छोटा'} व्यापार चलाता/चलाती हूँ। मेरा कोई मौजूदा ऋण चूक नहीं है।` :
-      schemeCategory === 'women' ? `मैं एक ${profileData.maritalStatus || 'विवाहित'} महिला हूँ जो BPL परिवार से हूँ।` :
-      schemeCategory === 'student' ? `मैं वर्तमान में ${profileData.institutionName || 'अपने संस्थान'} में ${profileData.qualification || 'उच्च शिक्षा'} कर रहा/रही हूँ।` :
-      'मैं इस योजना के लिए सभी आवश्यक पात्रता मानदंडों को पूरा करता/करती हूँ।'
+        schemeCategory === 'housing' ? `मैं वर्तमान में एक ${profileData.currentHouse || 'कच्चे'} घर में रहता/रहती हूँ। मेरे परिवार में ${profileData.familySize || 'कई'} सदस्य हैं। भारत में कहीं भी मेरा कोई पक्का घर नहीं है।` :
+          schemeCategory === 'health' ? `मेरे परिवार में ${profileData.familySize || 'कई'} सदस्य हैं। हमारे पास ${profileData.rationCardType || 'BPL'} राशन कार्ड है।` :
+            schemeCategory === 'business' ? `मैं ${profileData.businessAge ? `पिछले ${profileData.businessAge} से` : ''} एक ${profileData.businessType || 'छोटा'} व्यापार चलाता/चलाती हूँ। मेरा कोई मौजूदा ऋण चूक नहीं है।` :
+              schemeCategory === 'women' ? `मैं एक ${profileData.maritalStatus || 'विवाहित'} महिला हूँ जो BPL परिवार से हूँ।` :
+                schemeCategory === 'student' ? `मैं वर्तमान में ${profileData.institutionName || 'अपने संस्थान'} में ${profileData.qualification || 'उच्च शिक्षा'} कर रहा/रही हूँ।` :
+                  'मैं इस योजना के लिए सभी आवश्यक पात्रता मानदंडों को पूरा करता/करती हूँ।'
     ) : lang === 'mr-IN' ? (
       schemeCategory === 'farmer' ? `माझ्या नावावर ${profileData.land || 'शेतजमीन'} नोंदणीकृत आहे.` :
-      schemeCategory === 'housing' ? `मी सध्या ${profileData.currentHouse || 'कच्च्या'} घरात राहतो/राहते. माझ्या कुटुंबात ${profileData.familySize || 'अनेक'} सदस्य आहेत. भारतात कुठेही माझे पक्के घर नाही.` :
-      schemeCategory === 'health' ? `माझ्या कुटुंबात ${profileData.familySize || 'अनेक'} सदस्य आहेत. आमच्याकडे ${profileData.rationCardType || 'BPL'} रेशन कार्ड आहे.` :
-      schemeCategory === 'business' ? `मी ${profileData.businessAge ? `गेल्या ${profileData.businessAge} पासून` : ''} एक ${profileData.businessType || 'लहान'} व्यवसाय चालवतो/चालवते. माझे कोणतेही थकीत कर्ज नाही.` :
-      schemeCategory === 'women' ? `मी ${profileData.maritalStatus || 'विवाहित'} महिला असून BPL कुटुंबातील आहे.` :
-      schemeCategory === 'student' ? `मी सध्या ${profileData.institutionName || 'माझ्या संस्थेत'} ${profileData.qualification || 'उच्च शिक्षण'} घेत आहे.` :
-      'मी या योजनेसाठी सर्व आवश्यक पात्रता निकष पूर्ण करतो/करते.'
+        schemeCategory === 'housing' ? `मी सध्या ${profileData.currentHouse || 'कच्च्या'} घरात राहतो/राहते. माझ्या कुटुंबात ${profileData.familySize || 'अनेक'} सदस्य आहेत. भारतात कुठेही माझे पक्के घर नाही.` :
+          schemeCategory === 'health' ? `माझ्या कुटुंबात ${profileData.familySize || 'अनेक'} सदस्य आहेत. आमच्याकडे ${profileData.rationCardType || 'BPL'} रेशन कार्ड आहे.` :
+            schemeCategory === 'business' ? `मी ${profileData.businessAge ? `गेल्या ${profileData.businessAge} पासून` : ''} एक ${profileData.businessType || 'लहान'} व्यवसाय चालवतो/चालवते. माझे कोणतेही थकीत कर्ज नाही.` :
+              schemeCategory === 'women' ? `मी ${profileData.maritalStatus || 'विवाहित'} महिला असून BPL कुटुंबातील आहे.` :
+                schemeCategory === 'student' ? `मी सध्या ${profileData.institutionName || 'माझ्या संस्थेत'} ${profileData.qualification || 'उच्च शिक्षण'} घेत आहे.` :
+                  'मी या योजनेसाठी सर्व आवश्यक पात्रता निकष पूर्ण करतो/करते.'
     ) : (
       schemeCategory === 'farmer' ? `I am a farmer with ${profileData.land || 'agricultural land'} registered in my name.` :
-      schemeCategory === 'housing' ? `I currently reside in a ${profileData.currentHouse || 'kutcha'} house. My family consists of ${profileData.familySize || 'multiple'} members. I do not own any pucca house anywhere in India.` :
-      schemeCategory === 'health' ? `My family consists of ${profileData.familySize || 'multiple'} members. We hold a ${profileData.rationCardType || 'BPL'} ration card.` :
-      schemeCategory === 'business' ? `I run a ${profileData.businessType || 'small'} business${profileData.businessAge ? ` for the past ${profileData.businessAge}` : ''}. I have no existing loan defaults.` :
-      schemeCategory === 'women' ? `I am a ${profileData.maritalStatus || 'married'} woman from a BPL household.` :
-      schemeCategory === 'student' ? `I am currently pursuing ${profileData.qualification || 'higher education'} at ${profileData.institutionName || 'my institution'}.` :
-      'I meet all the required eligibility criteria for this scheme.'
+        schemeCategory === 'housing' ? `I currently reside in a ${profileData.currentHouse || 'kutcha'} house. My family consists of ${profileData.familySize || 'multiple'} members. I do not own any pucca house anywhere in India.` :
+          schemeCategory === 'health' ? `My family consists of ${profileData.familySize || 'multiple'} members. We hold a ${profileData.rationCardType || 'BPL'} ration card.` :
+            schemeCategory === 'business' ? `I run a ${profileData.businessType || 'small'} business${profileData.businessAge ? ` for the past ${profileData.businessAge}` : ''}. I have no existing loan defaults.` :
+              schemeCategory === 'women' ? `I am a ${profileData.maritalStatus || 'married'} woman from a BPL household.` :
+                schemeCategory === 'student' ? `I am currently pursuing ${profileData.qualification || 'higher education'} at ${profileData.institutionName || 'my institution'}.` :
+                  'I meet all the required eligibility criteria for this scheme.'
     )
 
   const draftLetter = lang === 'hi-IN' ? `सेवा में,
@@ -732,7 +1024,7 @@ Place: ${profileData.state}`
     schemes: g(S.full.panelSubs.schemes, lang),
     compare: gf(S.full.panelSubs.compare, lang, compareList.length),
     prep: schemeName,
-    tracker: `${trackerData.length} ${g(S.full.panelSubs.tracker, lang)}`,
+    tracker: `${applications.length} ${g(S.full.panelSubs.tracker, lang)}`,
     csc: g(S.full.panelSubs.csc, lang),
     helpline: 'All India'
   }
@@ -746,7 +1038,7 @@ Place: ${profileData.state}`
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <div style={{ width: '28px', height: '28px', background: '#E8690B', borderRadius: '7px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round">
-                <path d="M3 12h18M3 6h18M3 18h18"/>
+                <path d="M3 12h18M3 6h18M3 18h18" />
               </svg>
             </div>
             <div>
@@ -760,16 +1052,22 @@ Place: ${profileData.state}`
           </div>
         </div>
 
-        {/* USER SECTION */}
+        {/* USER SECTION — real logged-in user via useAuth(), never a
+            hardcoded placeholder identity. Guests see a generic label
+            instead of silently posing as some other person. */}
         <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#E8690B', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, color: 'white', flexShrink: 0 }}>
-            R
+            {(user?.full_name || user?.mobile_number || user?.email || '?').charAt(0).toUpperCase()}
           </div>
           <div>
-            <div style={{ fontSize: '12px', fontWeight: 700, color: 'white', lineHeight: 1.2 }}>Rajesh Patil</div>
-            <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.55)' }}>{g(S.full.farmerMaharashtra, lang)}</div>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: 'white', lineHeight: 1.2 }}>
+              {user?.full_name || user?.mobile_number || user?.email || g(S.full.guestUser, lang)}
+            </div>
+            <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.55)' }}>
+              {isAuthenticated ? (user?.mobile_number || user?.email || '') : g(S.full.notLoggedIn, lang)}
+            </div>
           </div>
-          <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#4ADE80', marginLeft: 'auto', flexShrink: 0 }}></div>
+          <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: isAuthenticated ? '#4ADE80' : '#78716C', marginLeft: 'auto', flexShrink: 0 }}></div>
         </div>
 
         {/* NAV SECTION */}
@@ -781,7 +1079,7 @@ Place: ${profileData.state}`
             { id: 'schemes', label: g(S.full.navSchemes, lang), badge: results.length.toString() },
             { id: 'compare', label: g(S.full.navCompare, lang), badge: compareList.length > 0 ? compareList.length.toString() : '' },
             { id: 'prep', label: g(S.full.navPrep, lang), badge: '' },
-            { id: 'tracker', label: g(S.full.navTracker, lang), badge: trackerData.length.toString() },
+            { id: 'tracker', label: g(S.full.navTracker, lang), badge: applications.length.toString() },
             { id: 'csc', label: g(S.full.navCSC, lang), badge: '' },
             { id: 'helpline', label: g(S.full.navHelpline, lang), badge: '' }
           ].map(item => (
@@ -799,12 +1097,12 @@ Place: ${profileData.state}`
               onClick={() => setActivePanel(item.id as ActivePanel)}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={activePanel === item.id ? 'white' : 'rgba(255,255,255,0.6)'} strokeWidth="2" strokeLinecap="round">
-                {item.id === 'schemes' && <><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></>}
-                {item.id === 'compare' && <><rect x="3" y="3" width="8" height="18" rx="1"/><rect x="13" y="3" width="8" height="12" rx="1"/></>}
-                {item.id === 'prep' && <><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></>}
-                {item.id === 'tracker' && <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>}
-                {item.id === 'csc' && <><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></>}
-                {item.id === 'helpline' && <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.67A2 2 0 012 .84h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.91 8.17a16 16 0 006.29 6.29l1.49-1.34a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 15.42z"/>}
+                {item.id === 'schemes' && <><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></>}
+                {item.id === 'compare' && <><rect x="3" y="3" width="8" height="18" rx="1" /><rect x="13" y="3" width="8" height="12" rx="1" /></>}
+                {item.id === 'prep' && <><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="9" y1="13" x2="15" y2="13" /><line x1="9" y1="17" x2="13" y2="17" /></>}
+                {item.id === 'tracker' && <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />}
+                {item.id === 'csc' && <><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></>}
+                {item.id === 'helpline' && <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.67A2 2 0 012 .84h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.91 8.17a16 16 0 006.29 6.29l1.49-1.34a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 15.42z" />}
               </svg>
               <span style={{ fontSize: '11px', fontWeight: 700, color: activePanel === item.id ? 'white' : 'rgba(255,255,255,0.65)' }}>
                 {item.label}
@@ -829,8 +1127,8 @@ Place: ${profileData.state}`
             onClick={() => router.push('/')}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="2">
-              <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
-              <polyline points="9 22 9 12 15 12 15 22"/>
+              <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+              <polyline points="9 22 9 12 15 12 15 22" />
             </svg>
             {g(S.full.backHome, lang)}
           </button>
@@ -850,8 +1148,8 @@ Place: ${profileData.state}`
             }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-              <circle cx="12" cy="8" r="4"/>
-              <path d="M6 20.5c0-2 3-3 6-3s6 1 6 3"/>
+              <circle cx="12" cy="8" r="4" />
+              <path d="M6 20.5c0-2 3-3 6-3s6 1 6 3" />
             </svg>
             {hasProfile ? gf(S.full.profileSaved, lang, profileData.fullName.split(' ')[0]) : g(S.full.loginSave, lang)}
           </button>
@@ -886,12 +1184,19 @@ Place: ${profileData.state}`
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <select
               value={lang}
-              onChange={(e) => setLang(e.target.value as 'hi-IN' | 'mr-IN' | 'en-IN')}
+              onChange={(e) => setLang(e.target.value as Lang)}
               style={{ fontSize: '10px', fontWeight: 700, border: '1px solid #E7E0D8', borderRadius: '5px', padding: '4px 8px', background: 'white', cursor: 'pointer', outline: 'none', color: '#1C1917' }}
             >
               <option value="hi-IN">हिंदी</option>
               <option value="mr-IN">मराठी</option>
               <option value="en-IN">English</option>
+              <option value="ta-IN">தமிழ்</option>
+              <option value="te-IN">తెలుగు</option>
+              <option value="kn-IN">ಕನ್ನಡ</option>
+              <option value="ml-IN">മലയാളം</option>
+              <option value="bn-IN">বাংলা</option>
+              <option value="gu-IN">ગુજરાતી</option>
+              <option value="pa-IN">ਪੰਜਾਬੀ</option>
             </select>
           </div>
         </div>
@@ -921,17 +1226,21 @@ Place: ${profileData.state}`
                       onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                     />
                     <button
+                      disabled={isTranscribing}
                       style={{
-                        width: '40px', height: '40px', borderRadius: '50%', border: 'none', cursor: 'pointer',
-                        flexShrink: 0, background: isListening ? '#DC2626' : '#F4F1EC',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                        width: '40px', height: '40px', borderRadius: '50%', border: 'none',
+                        cursor: isTranscribing ? 'wait' : 'pointer',
+                        flexShrink: 0, background: isRecording ? '#DC2626' : isTranscribing ? '#E8690B' : '#F4F1EC',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        opacity: isTranscribing ? 0.75 : 1,
                       }}
                       onClick={startVoice}
+                      title={isRecording ? g(S.full.voiceListening, lang) : isTranscribing ? g(S.full.voiceProcessing, lang) : undefined}
                     >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isListening ? 'white' : '#57534E'} strokeWidth="2" strokeLinecap="round">
-                        <rect x="9" y="2" width="6" height="11" rx="3"/>
-                        <path d="M5 10a7 7 0 0014 0"/>
-                        <line x1="12" y1="19" x2="12" y2="22"/>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isRecording || isTranscribing ? 'white' : '#57534E'} strokeWidth="2" strokeLinecap="round">
+                        <rect x="9" y="2" width="6" height="11" rx="3" />
+                        <path d="M5 10a7 7 0 0014 0" />
+                        <line x1="12" y1="19" x2="12" y2="22" />
                       </svg>
                     </button>
                     <button
@@ -945,6 +1254,16 @@ Place: ${profileData.state}`
                       {g(S.full.searchBtn, lang)}
                     </button>
                   </div>
+                  {(isRecording || isTranscribing) && (
+                    <div style={{ fontSize: '10px', fontWeight: 700, color: '#57534E', marginTop: '6px' }}>
+                      {isRecording ? g(S.full.voiceListening, lang) : g(S.full.voiceProcessing, lang)}
+                    </div>
+                  )}
+                  {voiceError && (
+                    <div style={{ fontSize: '10px', fontWeight: 700, color: '#DC2626', marginTop: '6px' }}>
+                      {voiceError}
+                    </div>
+                  )}
                   {hasSearched && (
                     <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginTop: '7px' }}>
                       <span style={{ fontSize: '10px', fontWeight: 700, padding: '3px 9px', borderRadius: '99px', color: 'white', cursor: 'pointer', background: '#1A6B3C' }}>
@@ -1101,9 +1420,9 @@ Place: ${profileData.state}`
                       {scheme.warning && (
                         <div style={{ background: '#FFFBEB', borderTop: '1px solid #FDE68A', padding: '4px 10px 4px 14px', display: 'flex', alignItems: 'center', gap: '4px', borderRadius: '0 0 8px 8px' }}>
                           <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="1.5">
-                            <path d="M10.29 3.86L1.82 18a2 2 0 00112.12L21.71 18a2 2 0 01-2.12-2.12"/>
-                            <line x1="12" y1="9" x2="12" y2="13"/>
-                            <line x1="12" y1="17" x2="12.01" y2="17"/>
+                            <path d="M10.29 3.86L1.82 18a2 2 0 00112.12L21.71 18a2 2 0 01-2.12-2.12" />
+                            <line x1="12" y1="9" x2="12" y2="13" />
+                            <line x1="12" y1="17" x2="12.01" y2="17" />
                           </svg>
                           <span style={{ fontSize: '9px', color: '#92400E', flex: 1 }}>{getSchemeWarning(scheme, lang)}</span>
                           <span style={{ fontSize: '9px', color: '#D97706', fontWeight: 700, cursor: 'pointer' }}>{g(S.full.fixArrow, lang)}</span>
@@ -1545,8 +1864,8 @@ Place: ${profileData.state}`
             <div style={{ background: 'white', borderRadius: '10px', padding: '32px', maxWidth: '560px', margin: '0 auto', marginTop: '16px', border: '1px solid #E7E0D8', textAlign: 'center' }}>
               <div style={{ width: '52px', height: '52px', borderRadius: '50%', background: '#FFF8F1', border: '2px solid #FED7AA', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#E8690B" strokeWidth="2">
-                  <circle cx="12" cy="8" r="4"/>
-                  <path d="M6 20.5c0-2 3-3 6-3s6 1 6 3"/>
+                  <circle cx="12" cy="8" r="4" />
+                  <path d="M6 20.5c0-2 3-3 6-3s6 1 6 3" />
                 </svg>
               </div>
               <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', color: '#15803D', fontSize: '10px', fontWeight: 700, padding: '3px 10px', borderRadius: '99px', display: 'inline-block', marginBottom: '12px' }}>
@@ -1563,28 +1882,28 @@ Place: ${profileData.state}`
                 <span style={{ fontSize: '10px', color: '#78716C', marginLeft: '4px' }}>
                   {lang === 'hi-IN' ? (
                     schemeCategory === 'farmer' ? 'नाम, आयु, राज्य, ज़मीन का विवरण, आधार-बैंक लिंक स्थिति' :
-                    schemeCategory === 'housing' ? 'नाम, आयु, राज्य, BPL कार्ड स्थिति, वर्तमान घर का प्रकार' :
-                    schemeCategory === 'health' ? 'नाम, आयु, राज्य, राशन कार्ड प्रकार, परिवार का आकार' :
-                    schemeCategory === 'business' ? 'नाम, आयु, राज्य, व्यापार प्रकार, ऋण इतिहास' :
-                    schemeCategory === 'women' ? 'नाम, आयु, राज्य, BPL स्थिति, LPG कनेक्शन स्थिति' :
-                    schemeCategory === 'student' ? 'नाम, आयु, राज्य, वर्तमान योग्यता, संस्थान' :
-                    'नाम, आयु, राज्य, व्यवसाय, आय'
+                      schemeCategory === 'housing' ? 'नाम, आयु, राज्य, BPL कार्ड स्थिति, वर्तमान घर का प्रकार' :
+                        schemeCategory === 'health' ? 'नाम, आयु, राज्य, राशन कार्ड प्रकार, परिवार का आकार' :
+                          schemeCategory === 'business' ? 'नाम, आयु, राज्य, व्यापार प्रकार, ऋण इतिहास' :
+                            schemeCategory === 'women' ? 'नाम, आयु, राज्य, BPL स्थिति, LPG कनेक्शन स्थिति' :
+                              schemeCategory === 'student' ? 'नाम, आयु, राज्य, वर्तमान योग्यता, संस्थान' :
+                                'नाम, आयु, राज्य, व्यवसाय, आय'
                   ) : lang === 'mr-IN' ? (
                     schemeCategory === 'farmer' ? 'नाव, वय, राज्य, जमिनीचा तपशील, आधार-बँक लिंक स्थिती' :
-                    schemeCategory === 'housing' ? 'नाव, वय, राज्य, BPL कार्ड स्थिती, सध्याच्या घराचा प्रकार' :
-                    schemeCategory === 'health' ? 'नाव, वय, राज्य, रेशन कार्ड प्रकार, कुटुंबाचा आकार' :
-                    schemeCategory === 'business' ? 'नाव, वय, राज्य, व्यवसाय प्रकार, कर्ज इतिहास' :
-                    schemeCategory === 'women' ? 'नाव, वय, राज्य, BPL स्थिती, LPG कनेक्शन स्थिती' :
-                    schemeCategory === 'student' ? 'नाव, वय, राज्य, सध्याची पात्रता, संस्था' :
-                    'नाव, वय, राज्य, व्यवसाय, उत्पन्न'
+                      schemeCategory === 'housing' ? 'नाव, वय, राज्य, BPL कार्ड स्थिती, सध्याच्या घराचा प्रकार' :
+                        schemeCategory === 'health' ? 'नाव, वय, राज्य, रेशन कार्ड प्रकार, कुटुंबाचा आकार' :
+                          schemeCategory === 'business' ? 'नाव, वय, राज्य, व्यवसाय प्रकार, कर्ज इतिहास' :
+                            schemeCategory === 'women' ? 'नाव, वय, राज्य, BPL स्थिती, LPG कनेक्शन स्थिती' :
+                              schemeCategory === 'student' ? 'नाव, वय, राज्य, सध्याची पात्रता, संस्था' :
+                                'नाव, वय, राज्य, व्यवसाय, उत्पन्न'
                   ) : (
                     schemeCategory === 'farmer' ? 'Name, Age, State, Land details, Aadhaar-bank link status' :
-                    schemeCategory === 'housing' ? 'Name, Age, State, BPL card status, Current house type' :
-                    schemeCategory === 'health' ? 'Name, Age, State, Ration card type, Family size' :
-                    schemeCategory === 'business' ? 'Name, Age, State, Business type, Loan history' :
-                    schemeCategory === 'women' ? 'Name, Age, State, BPL status, LPG connection status' :
-                    schemeCategory === 'student' ? 'Name, Age, State, Current qualification, Institution' :
-                    'Name, Age, State, Occupation, Income'
+                      schemeCategory === 'housing' ? 'Name, Age, State, BPL card status, Current house type' :
+                        schemeCategory === 'health' ? 'Name, Age, State, Ration card type, Family size' :
+                          schemeCategory === 'business' ? 'Name, Age, State, Business type, Loan history' :
+                            schemeCategory === 'women' ? 'Name, Age, State, BPL status, LPG connection status' :
+                              schemeCategory === 'student' ? 'Name, Age, State, Current qualification, Institution' :
+                                'Name, Age, State, Occupation, Income'
                   )}
                 </span>
               </div>
@@ -1594,34 +1913,57 @@ Place: ${profileData.state}`
               >
                 {g(S.full.fillAndGenerate, lang)}
               </button>
-              <button
-                style={{ background: 'white', color: '#78716C', border: '1.5px solid #E7E0D8', borderRadius: '8px', padding: '10px 24px', fontSize: '11px', fontWeight: 700, cursor: 'pointer', width: '100%', marginTop: '8px', fontFamily: 'inherit' }}
-                onClick={useDemoProfile}
-              >
-                {g(S.full.useDemo, lang)}
-              </button>
             </div>
           )}
 
           {activePanel === 'prep' && showProfileForm && (
             <ApplicationPreparationForm
-              lang={lang}
+              lang={toDocCheckLang(lang)}
               schemeName={schemeName}
+              schemeCategory={schemeCategory}
               requiredDocuments={requiredDocs}
               profileData={profileData}
               onFieldChange={updateProfile}
               onBack={() => setShowProfileForm(false)}
               onSubmit={async () => {
-              try {
-                await apiPatch("/users/me", toUserPatchPayload(profileData))
-                await apiPut("/users/me/profile", toProfilePutPayload(profileData))
-                setHasProfile(true)
-                setShowProfileForm(false)
-              } catch (err) {
-                const message = err instanceof ApiError ? String(err.message) : "Could not save your profile. Please try again."
-                alert(message)
-              }
-            }}
+                try {
+                  await apiPatch("/users/me", toUserPatchPayload(profileData))
+                  await apiPut("/users/me/profile", toProfilePutPayload(profileData))
+                  setHasProfile(true)
+                  setShowProfileForm(false)
+                } catch (err) {
+                  const message = err instanceof ApiError ? String(err.message) : "Could not save your profile. Please try again."
+                  alert(message)
+                  return
+                }
+
+                // Connect to the real applications backend (POST /applications)
+                // now that the profile is saved — starts a real draft
+                // Application row for this scheme. dbId is only populated
+                // once GET /schemes/{id} has resolved (see detailToSchemeItem);
+                // if it's still empty (e.g. scheme selected from a stale
+                // state), skip silently rather than sending a bad request.
+                if (!selectedScheme.dbId) return
+                setApplicationStatus('creating')
+                try {
+                  const created = await createApplication(selectedScheme.dbId)
+                  setCurrentApplicationId(created.id)
+                  setApplicationStatus('created')
+                  refreshApplications()
+                } catch (err) {
+                  if (err instanceof ApiClientError && err.status === 400) {
+                    setApplicationStatus('exists')
+                    // No id came back on the 400 — resolve it from the
+                    // user's existing applications so Generate Letter still
+                    // has something to call.
+                    const list = await refreshApplications()
+                    const existing = list?.find((a) => a.scheme_id === selectedScheme.dbId)
+                    setCurrentApplicationId(existing?.id ?? null)
+                  } else {
+                    setApplicationStatus('error')
+                  }
+                }
+              }}
             />
           )}
 
@@ -1631,11 +1973,33 @@ Place: ${profileData.state}`
                 <div>
                   <h2 className="flex items-center gap-2 text-[18px] font-bold text-[#1C1917]" style={{ fontFamily: 'var(--font-libre-baskerville)' }}>
                     <FileCheck2 size={18} className="text-[#E8690B]" aria-hidden="true" />
-                    {drt(DR.full.tabTitle, lang)}
+                    {drt(DR.full.tabTitle, toDocCheckLang(lang))}
                   </h2>
                   <p className="text-[11px] text-[#78716C] mt-0.5">
-                    {drt(DR.full.selectedScheme, lang)}: <span className="font-semibold text-[#1C1917]">{schemeName}</span>
+                    {drt(DR.full.selectedScheme, toDocCheckLang(lang))}: <span className="font-semibold text-[#1C1917]">{schemeName}</span>
                   </p>
+                  {applicationStatus !== 'idle' && (
+                    <p
+                      className="text-[11px] mt-1"
+                      style={{ color: applicationStatus === 'error' ? '#DC2626' : applicationStatus === 'created' ? '#15803D' : '#78716C' }}
+                      role={applicationStatus === 'error' ? 'alert' : undefined}
+                    >
+                      {applicationStatus === 'creating' && g(S.full.applicationCreating, lang)}
+                      {applicationStatus === 'created' && g(S.full.applicationStarted, lang)}
+                      {applicationStatus === 'exists' && g(S.full.applicationExists, lang)}
+                      {applicationStatus === 'error' && g(S.full.applicationError, lang)}
+                      {(applicationStatus === 'created' || applicationStatus === 'exists') && (
+                        <button
+                          type="button"
+                          onClick={() => setActivePanel('tracker')}
+                          className="ml-2 underline font-bold"
+                          style={{ color: '#E8690B' }}
+                        >
+                          {g(S.full.trackerTitle, lang)} →
+                        </button>
+                      )}
+                    </p>
+                  )}
                 </div>
                 <div className="flex flex-col items-end gap-1">
                   <button
@@ -1644,7 +2008,7 @@ Place: ${profileData.state}`
                     className="flex items-center gap-1.5 text-[11px] font-bold text-[#78716C] border border-[#E7E0D8] rounded-[7px] px-3 py-2 hover:border-[#DC2626] hover:text-[#DC2626] transition-colors"
                   >
                     <Trash2 size={13} aria-hidden="true" />
-                    {drt(DR.common.clearData, lang)}
+                    {drt(DR.common.clearData, toDocCheckLang(lang))}
                   </button>
                   {hasStoredDocData && Object.keys(docResults).length === 0 && (
                     <span className="text-[9.5px] text-[#A8A29E]">
@@ -1655,16 +2019,16 @@ Place: ${profileData.state}`
               </div>
 
               <div className="bg-[#EFF6FF] border border-[#BFDBFE] rounded-[8px] px-3 py-2 mb-2">
-                <p className="text-[10.5px] text-[#1D4ED8] leading-[1.5]">{drt(DR.common.purposeStatement, lang)}</p>
+                <p className="text-[10.5px] text-[#1D4ED8] leading-[1.5]">{drt(DR.common.purposeStatement, toDocCheckLang(lang))}</p>
               </div>
               <div className="bg-[#FFFBEB] border border-[#FDE68A] rounded-[8px] px-3 py-2 mb-4">
-                <p className="text-[10.5px] text-[#92400E] leading-[1.5]">{drt(DR.common.safetyNotice, lang)}</p>
+                <p className="text-[10.5px] text-[#92400E] leading-[1.5]">{drt(DR.common.safetyNotice, toDocCheckLang(lang))}</p>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-4">
                 {/* LEFT: required documents list */}
                 <div className="space-y-2">
-                  <div className="text-[10px] uppercase font-bold text-[#A8A29E] tracking-wide">{drt(DR.full.requiredDocuments, lang)}</div>
+                  <div className="text-[10px] uppercase font-bold text-[#A8A29E] tracking-wide">{drt(DR.full.requiredDocuments, toDocCheckLang(lang))}</div>
                   {requiredDocs.map((ref) => {
                     const docResult = docResults[ref.type]
                     const isActive = ref.type === activeDocType
@@ -1680,15 +2044,15 @@ Place: ${profileData.state}`
                       >
                         <div className="flex items-center gap-2">
                           <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: dotColor }} aria-hidden="true" />
-                          <span className="text-[12.5px] font-semibold text-[#1C1917] flex-1">{drt(DR.documentTypes[ref.type], lang)}</span>
-                          {!ref.required && <span className="text-[8px] font-bold text-[#A8A29E] uppercase">{drt(DR.common.optional, lang)}</span>}
+                          <span className="text-[12.5px] font-semibold text-[#1C1917] flex-1">{drt(DR.documentTypes[ref.type], toDocCheckLang(lang))}</span>
+                          {!ref.required && <span className="text-[8px] font-bold text-[#A8A29E] uppercase">{drt(DR.common.optional, toDocCheckLang(lang))}</span>}
                         </div>
-                        <div className="text-[9.5px] text-[#A8A29E] mt-1 ml-4">{drt(DR.status[statusKey], lang)} · {drt(DR.reasons[ref.reasonKey as keyof typeof DR.reasons], lang)}</div>
+                        <div className="text-[9.5px] text-[#A8A29E] mt-1 ml-4">{drt(DR.status[statusKey], toDocCheckLang(lang))} · {drt(DR.reasons[ref.reasonKey as keyof typeof DR.reasons], toDocCheckLang(lang))}</div>
                       </button>
                     )
                   })}
                   <div className="pt-1">
-                    <ReadinessSummary lang={lang} score={docReadinessScore} compact />
+                    <ReadinessSummary lang={toDocCheckLang(lang)} score={docReadinessScore} compact />
                   </div>
                 </div>
 
@@ -1696,16 +2060,16 @@ Place: ${profileData.state}`
                 <div className="space-y-4">
                   <div className="bg-white border border-[#E7E0D8] rounded-[10px] p-4">
                     <h3 className="flex items-center gap-2 text-[14px] font-bold text-[#1C1917] mb-3" style={{ fontFamily: 'var(--font-libre-baskerville)' }}>
-                      {drt(DR.documentTypes[activeDocType], lang)}
+                      {drt(DR.documentTypes[activeDocType], toDocCheckLang(lang))}
                       {activeDocRef && !activeDocRef.required && (
-                        <span className="text-[9px] font-bold text-[#A8A29E] uppercase border border-[#E7E0D8] rounded-full px-2 py-0.5">{drt(DR.common.optional, lang)}</span>
+                        <span className="text-[9px] font-bold text-[#A8A29E] uppercase border border-[#E7E0D8] rounded-full px-2 py-0.5">{drt(DR.common.optional, toDocCheckLang(lang))}</span>
                       )}
                     </h3>
                     <DocumentReadinessCheck
                       key={activeDocType}
-                      lang={lang}
+                      lang={toDocCheckLang(lang)}
                       documentType={activeDocType}
-                      displayLabel={drt(DR.documentTypes[activeDocType], lang)}
+                      displayLabel={drt(DR.documentTypes[activeDocType], toDocCheckLang(lang))}
                       expectedProfileName={profileData.fullName || undefined}
                       onProfileNameProvided={(name) => updateProfile('fullName', name)}
                       initialResult={docResults[activeDocType] ?? null}
@@ -1721,11 +2085,58 @@ Place: ${profileData.state}`
                     )}
                   </div>
 
-                  <NameConsistencyCard lang={lang} profileName={profileData.fullName || '—'} comparisons={nameComparisons} onGoToDocument={(t) => setSelectedDocType(t)} />
+                  <NameConsistencyCard lang={toDocCheckLang(lang)} profileName={profileData.fullName || '—'} comparisons={nameComparisons} onGoToDocument={(t) => setSelectedDocType(t)} />
 
-                  <ReadinessSummary lang={lang} score={docReadinessScore} />
+                  <ReadinessSummary lang={toDocCheckLang(lang)} score={docReadinessScore} />
 
-                  <p className="text-[10px] text-[#A8A29E] leading-[1.5]">{drt(DR.common.disclaimerNote, lang)}</p>
+                  {currentApplicationId && (
+                    <div className="bg-white border border-[#E7E0D8] rounded-[10px] p-4">
+                      {!letterTextByAppId[currentApplicationId] ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={handleGenerateLetter}
+                            disabled={letterStatus === 'generating'}
+                            className="w-full text-white text-[13px] font-bold rounded-[8px] py-3"
+                            style={{ background: letterStatus === 'generating' ? '#D1CCC3' : '#E8690B', cursor: letterStatus === 'generating' ? 'default' : 'pointer' }}
+                          >
+                            {letterStatus === 'generating' ? g(S.full.generatingLetter, lang) : g(S.full.generateLetterBtn, lang)}
+                          </button>
+                          {letterStatus === 'error' && (
+                            <p className="text-[11px] mt-2" style={{ color: '#DC2626' }} role="alert">{g(S.full.letterError, lang)}</p>
+                          )}
+                          {letterStatus === 'unavailable' && (
+                            <p className="text-[11px] mt-2" style={{ color: '#78716C' }}>{g(S.full.letterUnavailable, lang)}</p>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-center justify-between mb-2">
+                            <h3 className="text-[13px] font-bold text-[#1C1917]">{g(S.full.letterGeneratedHeading, lang)}</h3>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(letterTextByAppId[currentApplicationId] ?? '')
+                                setLetterCopied(true)
+                                setTimeout(() => setLetterCopied(false), 2000)
+                              }}
+                              className="text-[10px] font-bold border border-[#E7E0D8] rounded-[6px] px-2.5 py-1.5"
+                            >
+                              {letterCopied ? g(S.full.letterCopied, lang) : g(S.full.copyLetterBtn, lang)}
+                            </button>
+                          </div>
+                          <pre
+                            className="text-[11px] text-[#1C1917] whitespace-pre-wrap max-h-[320px] overflow-y-auto p-3 rounded-[6px]"
+                            style={{ background: '#FAF7F2', fontFamily: 'inherit', border: '1px solid #E7E0D8' }}
+                          >
+                            {letterTextByAppId[currentApplicationId]}
+                          </pre>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-[#A8A29E] leading-[1.5]">{drt(DR.common.disclaimerNote, toDocCheckLang(lang))}</p>
                 </div>
               </div>
             </div>
@@ -1760,98 +2171,136 @@ Place: ${profileData.state}`
                   ))}
                 </div>
               </div>
-              {trackerData
+
+              {applicationsLoading && applications.length === 0 && (
+                <div style={{ padding: '24px 12px', textAlign: 'center', fontSize: '11px', color: '#78716C' }}>
+                  {g(S.full.trackerLoading, lang)}
+                </div>
+              )}
+              {applicationsError && (
+                <div style={{ padding: '12px', textAlign: 'center' }}>
+                  <p style={{ fontSize: '11px', color: '#DC2626', marginBottom: '8px' }}>{applicationsError}</p>
+                  <button
+                    style={{ fontSize: '10px', fontWeight: 700, padding: '6px 10px', borderRadius: '6px', border: 'none', background: '#E8690B', color: 'white', cursor: 'pointer', fontFamily: 'inherit' }}
+                    onClick={() => refreshApplications()}
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+              {!applicationsLoading && !applicationsError && applications.length === 0 && (
+                <div style={{ padding: '24px 12px', textAlign: 'center', fontSize: '11px', color: '#78716C' }}>
+                  {g(S.full.trackerEmpty, lang)}
+                </div>
+              )}
+              {applications
                 .filter(item => trackerFilter === 'all' ||
-                  (trackerFilter === 'pending' && (item.status === 'pending' || item.status === 'docs_needed')) ||
+                  (trackerFilter === 'pending' && item.status !== 'approved' && item.status !== 'rejected') ||
                   (trackerFilter === 'approved' && item.status === 'approved') ||
-                  (trackerFilter === 'action' && (item.status === 'rejected' || item.status === 'docs_needed'))
+                  (trackerFilter === 'action' && (item.status === 'rejected' || item.status === 'docs_pending'))
                 )
-                .map(item => (
-                  <div key={item.id} style={{ background: 'white', borderRadius: '10px', marginBottom: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', border: '1px solid #E7E0D8' }}>
-                    {/* Progress stepper simplified */}
-                    <div style={{ background: '#FAF7F2', padding: '16px 20px', borderBottom: '1px solid #E7E0D8' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
-                        {[g(S.full.stepApplied, lang), g(S.full.stepReview, lang), g(S.full.stepVerified, lang), g(S.full.stepDisbursed, lang)].map((step, i) => (
-                          <React.Fragment key={i}>
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                              <div style={{
-                                width: '28px', height: '28px', borderRadius: '50%',
-                                border: '2px solid',
-                                borderColor: i < (item.status === 'approved' ? 4 : item.status === 'docs_needed' ? 2 : item.status === 'pending' ? 1 : 1) ? '#1A6B3C' : '#E7E0D8',
-                                background: i < (item.status === 'approved' ? 4 : item.status === 'docs_needed' ? 2 : item.status === 'pending' ? 1 : 1) ? '#1A6B3C' : 'white',
-                                color: i < (item.status === 'approved' ? 4 : item.status === 'docs_needed' ? 2 : item.status === 'pending' ? 1 : 1) || (item.status === 'docs_needed' && i === 2) ? 'white' : '#A8A29E',
-                                fontSize: '11px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center'
-                              }}>
-                                {i < (item.status === 'approved' ? 4 : item.status === 'docs_needed' ? 2 : item.status === 'pending' ? 1 : 1) ? '✓' : (item.status === 'docs_needed' && i === 2) ? '⚠' : i + 1}
-                              </div>
-                              <div style={{ fontSize: '9px', fontWeight: 700, color: i < (item.status === 'approved' ? 4 : item.status === 'docs_needed' ? 2 : item.status === 'pending' ? 1 : 1) ? '#1A6B3C' : (item.status === 'docs_needed' && i === 2) ? '#D97706' : '#A8A29E' }}>
-                                {step}
-                              </div>
+                .map((item, index) => {
+                  const schemeDisplayName = schemeNamesById[item.scheme_id] ?? '…'
+                  const colors = paletteFor(index)
+                  const stepIndex = getStatusStepIndex(item.status)
+                  const dateApplied = new Date(item.created_at).toLocaleDateString(
+                    lang === 'hi-IN' ? 'hi-IN' : lang === 'mr-IN' ? 'mr-IN' : 'en-IN',
+                    { day: '2-digit', month: 'short', year: 'numeric' }
+                  )
+                  return (
+                    <div key={item.id} style={{ background: 'white', borderRadius: '10px', marginBottom: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', border: '1px solid #E7E0D8' }}>
+                      {/* Progress stepper — 5 forward states; approved/rejected shown via the status pill instead of a 6th node */}
+                      <div style={{ background: '#FAF7F2', padding: '16px 20px', borderBottom: '1px solid #E7E0D8' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                          {[g(S.full.stepApplied, lang), g(S.full.stepDocsPending, lang), g(S.full.stepLetterGenerated, lang), g(S.full.stepReview, lang), g(S.full.stepVerified, lang)].map((step, i) => {
+                            const filled = i < stepIndex
+                            const isRejectedMarker = item.status === 'rejected' && i === stepIndex - 1
+                            return (
+                              <React.Fragment key={i}>
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                                  <div style={{
+                                    width: '28px', height: '28px', borderRadius: '50%',
+                                    border: '2px solid',
+                                    borderColor: isRejectedMarker ? '#DC2626' : filled ? '#1A6B3C' : '#E7E0D8',
+                                    background: isRejectedMarker ? '#DC2626' : filled ? '#1A6B3C' : 'white',
+                                    color: filled || isRejectedMarker ? 'white' : '#A8A29E',
+                                    fontSize: '11px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                  }}>
+                                    {isRejectedMarker ? '✗' : filled ? '✓' : i + 1}
+                                  </div>
+                                  <div style={{ fontSize: '9px', fontWeight: 700, color: isRejectedMarker ? '#DC2626' : filled ? '#1A6B3C' : '#A8A29E' }}>
+                                    {step}
+                                  </div>
+                                </div>
+                                {i < 4 && (
+                                  <div style={{
+                                    flex: 1, height: '2px', marginBottom: '16px',
+                                    background: i < stepIndex - 1 ? '#1A6B3C' : '#E7E0D8'
+                                  }}></div>
+                                )}
+                              </React.Fragment>
+                            )
+                          })}
+                        </div>
+                      </div>
+                      {/* Details */}
+                      <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ width: '40px', height: '40px', borderRadius: '50%', border: '1.5px solid #E7E0D8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, background: '#FAF7F2', color: colors.logo }}>
+                          {schemeDisplayName.charAt(0).toUpperCase()}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: '12px', fontWeight: 700, color: '#1C1917' }}>{schemeDisplayName}</div>
+                          <div style={{ fontSize: '9px', color: '#A8A29E', marginTop: '1px' }}>{dateApplied}</div>
+                          {item.reference_number ? (
+                            <div style={{ fontSize: '9px', color: '#57534E', fontFamily: 'monospace', background: '#F4F1EC', padding: '2px 8px', borderRadius: '4px', display: 'inline-block', marginTop: '3px' }}>
+                              {item.reference_number}
                             </div>
-                            {i < 3 && (
-                              <div style={{
-                                flex: 1, height: '2px', marginBottom: '16px',
-                                background: i < (item.status === 'approved' ? 4 : item.status === 'docs_needed' ? 2 : item.status === 'pending' ? 1 : 1) ? '#1A6B3C' : '#E7E0D8'
-                              }}></div>
+                          ) : (
+                            <div style={{ fontSize: '9px', color: '#A8A29E', fontStyle: 'italic', marginTop: '3px' }}>
+                              {g(S.full.noRefYet, lang)}
+                            </div>
+                          )}
+                          <div style={{ fontSize: '10px', color: '#57534E', lineHeight: 1.5, marginTop: '4px' }}>
+                            {getNextStepText(item.status, lang)}
+                          </div>
+                        </div>
+                        <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
+                          <div style={{
+                            width: '130px', padding: '8px 12px', borderRadius: '8px', textAlign: 'center',
+                            fontSize: '11px', fontWeight: 700,
+                            ...getRealStatusStyle(item.status, lang)
+                          }}>
+                            {getRealStatusStyle(item.status, lang).label}
+                          </div>
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <button
+                              style={{ fontSize: '9px', fontWeight: 700, padding: '4px 8px', borderRadius: '5px', border: '1px solid #E7E0D8', background: 'white', cursor: 'pointer', fontFamily: 'inherit' }}
+                              onClick={() => refreshApplications()}
+                            >
+                              {g(S.full.updateBtn, lang)}
+                            </button>
+                            {item.status === 'docs_pending' && (
+                              <button
+                                style={{ fontSize: '9px', fontWeight: 700, padding: '4px 8px', borderRadius: '5px', border: 'none', background: '#E8690B', color: 'white', cursor: 'pointer', fontFamily: 'inherit' }}
+                                onClick={() => setActivePanel('csc')}
+                              >
+                                {g(S.full.findCSCArrow, lang)}
+                              </button>
                             )}
-                          </React.Fragment>
-                        ))}
-                      </div>
-                    </div>
-                    {/* Details */}
-                    <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <div style={{ width: '40px', height: '40px', borderRadius: '50%', border: '1.5px solid #E7E0D8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, background: '#FAF7F2', color: item.logoColor }}>
-                        {item.logoText}
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: '12px', fontWeight: 700, color: '#1C1917' }}>{getTrackerName(item, lang)}</div>
-                        <div style={{ fontSize: '9px', color: '#A8A29E', marginTop: '1px' }}>{item.dateApplied}</div>
-                        {item.referenceNumber ? (
-                          <div style={{ fontSize: '9px', color: '#57534E', fontFamily: 'monospace', background: '#F4F1EC', padding: '2px 8px', borderRadius: '4px', display: 'inline-block', marginTop: '3px' }}>
-                            {item.referenceNumber}
+                            {item.status === 'approved' && (
+                              <button
+                                style={{ fontSize: '9px', fontWeight: 700, padding: '4px 8px', borderRadius: '5px', border: 'none', background: '#25D366', color: 'white', cursor: 'pointer', fontFamily: 'inherit' }}
+                                onClick={() => shareWhatsApp(gf(S.full.approvedShare, lang, schemeDisplayName) + (item.reference_number ? '\nRef: ' + item.reference_number : ''))}
+                              >
+                                {g(S.full.shareCheck, lang)}
+                              </button>
+                            )}
                           </div>
-                        ) : (
-                          <div style={{ fontSize: '9px', color: '#A8A29E', fontStyle: 'italic', marginTop: '3px' }}>
-                            {g(S.full.noRefYet, lang)}
-                          </div>
-                        )}
-                        <div style={{ fontSize: '10px', color: '#57534E', lineHeight: 1.5, marginTop: '4px' }}>
-                          {getTrackerNextStep(item, lang)}
-                        </div>
-                      </div>
-                      <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
-                        <div style={{
-                          width: '120px', padding: '8px 12px', borderRadius: '8px', textAlign: 'center',
-                          fontSize: '11px', fontWeight: 700,
-                          ...getStatusStyle(item.status, lang)
-                        }}>
-                          {getStatusStyle(item.status, lang).label}
-                        </div>
-                        <div style={{ display: 'flex', gap: '4px' }}>
-                          <button style={{ fontSize: '9px', fontWeight: 700, padding: '4px 8px', borderRadius: '5px', border: '1px solid #E7E0D8', background: 'white', cursor: 'pointer', fontFamily: 'inherit' }}>
-                            {g(S.full.updateBtn, lang)}
-                          </button>
-                          {item.status === 'docs_needed' && (
-                            <button
-                              style={{ fontSize: '9px', fontWeight: 700, padding: '4px 8px', borderRadius: '5px', border: 'none', background: '#E8690B', color: 'white', cursor: 'pointer', fontFamily: 'inherit' }}
-                              onClick={() => setActivePanel('csc')}
-                            >
-                              {g(S.full.findCSCArrow, lang)}
-                            </button>
-                          )}
-                          {item.status === 'approved' && (
-                            <button
-                              style={{ fontSize: '9px', fontWeight: 700, padding: '4px 8px', borderRadius: '5px', border: 'none', background: '#25D366', color: 'white', cursor: 'pointer', fontFamily: 'inherit' }}
-                              onClick={() => shareWhatsApp(gf(S.full.approvedShare, lang, getTrackerName(item, lang)) + '\nRef: ' + item.referenceNumber)}
-                            >
-                              {g(S.full.shareCheck, lang)}
-                            </button>
-                          )}
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
             </div>
           )}
 

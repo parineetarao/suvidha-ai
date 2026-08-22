@@ -147,8 +147,8 @@ def list_schemes(
     )
 
 
-@router.get("/{scheme_id}", response_model=SchemeDetail)
-def get_scheme(scheme_id: str, lang: str = "en", db: Session = Depends(get_db)):
+#@router.get("/{scheme_id}", response_model=SchemeDetail)
+#def get_scheme(scheme_id: str, lang: str = "en", db: Session = Depends(get_db)):
     stmt = select(Scheme).where(Scheme.scheme_code == scheme_id)
     scheme = db.scalar(stmt)
     if scheme is None:
