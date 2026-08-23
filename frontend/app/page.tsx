@@ -1,5 +1,5 @@
 'use client';
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { useAuth } from "@/lib/auth-context"
 import AuthStatus from "@/components/AuthStatus"
 import Image from 'next/image';
@@ -8,6 +8,39 @@ import { useRouter } from 'next/navigation';
 import { ChevronDown, Mic, Search, CheckCircle2, AlertCircle, FileText, MessageSquare, ArrowRight } from 'lucide-react';
 import { useState } from 'react';
 import { S, g, gf, type Lang } from '@/lib/strings';
+import { searchSchemes } from '@/lib/api';
+
+// Canonical English search queries per quick-category chip (Section 2) and
+// per audience card (Section 8) — kept in English regardless of UI language
+// so POST /schemes/search gets a stable query and results don't shuffle
+// every time someone switches languages. The multilingual embedding model
+// matches these against scheme text in any language on the DB side.
+const CHIP_QUERIES: Record<string, string> = {
+  farmer: 'farmer agriculture crop land',
+  senior: 'senior citizen elderly pension old age',
+  woman: 'single woman widow women welfare',
+  student: 'student scholarship education',
+  wage: 'daily wage worker laborer construction unorganised',
+  housing: 'housing home rural awas',
+};
+
+const AUDIENCE_QUERIES: Record<string, string> = {
+  farmers: 'farmer agriculture crop land',
+  women: 'women welfare maternity widow girl child',
+  seniors: 'senior citizen elderly pension old age',
+  students: 'student scholarship education skill training',
+  business: 'business loan entrepreneur MSME self-employed',
+  health: 'health medical insurance treatment',
+};
+
+// A real match_score (0-100, from the backend's hybrid semantic+TF-IDF
+// ranking) below this is treated as "not really about this category" when
+// turning a ranked list into a headline count — the DB's category/
+// eligibility_rules fields are too sparse (see backend inspection) to give
+// an exact taxonomy-based count instead.
+const RELEVANCE_THRESHOLD = 32;
+
+type CategoryCountState = { status: 'loading' } | { status: 'ready'; count: number } | { status: 'error' };
 
 function CitizenOrbitalLogoMark({ size }: { size: number }) {
   const radius = Math.round((size * 8) / 34);
@@ -71,8 +104,70 @@ export default function SuvidhaAILanding() {
   const [lang, setLang] = useState<Lang>('en-IN');
   const [searchInput, setSearchInput] = useState('');
   const [showHelpModal, setShowHelpModal] = useState(false);
+  const searchBoxRef = useRef<HTMLTextAreaElement>(null);
 
   const { isAuthenticated } = useAuth();
+
+  // Real DB-backed counts for the 6 "Every Citizen" cards (Section 8) —
+  // fetched once on mount via the existing POST /schemes/search endpoint,
+  // independent of the UI language toggle (see LANG_TO_API_LANGUAGE note
+  // above on why the query itself stays English).
+  const [audienceCounts, setAudienceCounts] = useState<Record<string, CategoryCountState>>(
+    Object.fromEntries(Object.keys(AUDIENCE_QUERIES).map((k) => [k, { status: 'loading' }])) as Record<string, CategoryCountState>
+  );
+
+  const loadAudienceCounts = () => {
+    setAudienceCounts(
+      Object.fromEntries(Object.keys(AUDIENCE_QUERIES).map((k) => [k, { status: 'loading' }])) as Record<string, CategoryCountState>
+    );
+    Object.entries(AUDIENCE_QUERIES).forEach(([key, query]) => {
+      searchSchemes(query, 'en', 50)
+        .then((results) => {
+          const count = results.filter((r) => r.match_score >= RELEVANCE_THRESHOLD).length;
+          setAudienceCounts((prev) => ({ ...prev, [key]: { status: 'ready', count } }));
+        })
+        .catch(() => {
+          setAudienceCounts((prev) => ({ ...prev, [key]: { status: 'error' } }));
+        });
+    });
+  };
+
+  useEffect(() => {
+    loadAudienceCounts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function goToDiscovery(query?: string, panel?: 'prep') {
+    const params = new URLSearchParams();
+    if (query) params.set('q', query);
+    if (panel) params.set('panel', panel);
+    params.set('lang', lang);
+    router.push('/full?' + params.toString());
+  }
+
+  function focusHeroSearch() {
+    searchBoxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    searchBoxRef.current?.focus();
+  }
+
+  // How It Works step cards -> real integration targets. Steps 2/3/4/6 all
+  // land on app/full's already-live schemes panel (it shows search,
+  // eligibility, rejection risks, and WhatsApp share together in one
+  // workflow — see inspection notes), carrying forward whatever the user
+  // already typed in the hero search box if anything. Step 5 deep-links
+  // into the Application Preparation panel there (now wired to
+  // POST /applications). Step 1 just points back at the existing search
+  // box — that entry point already works and isn't being rebuilt.
+  function handleStepClick(step: number) {
+    const query = searchInput.trim() || undefined;
+    if (step === 1) {
+      focusHeroSearch();
+    } else if (step === 5) {
+      goToDiscovery(query, 'prep');
+    } else {
+      goToDiscovery(query);
+    }
+  }
 
   const languages: { code: Lang; label: string }[] = [
     { code: 'en-IN', label: 'English' },
@@ -101,7 +196,7 @@ export default function SuvidhaAILanding() {
         <div className="hidden md:flex items-center gap-5 lg:gap-8">
           {[
             { id: 'schemes', label: g(S.landing.navSchemes, lang) },
-            { id: 'how', label: g(S.landing.navHow, lang) },
+            { id: 'how-it-works', label: g(S.landing.navHow, lang) },
             { id: 'about', label: g(S.landing.navAbout, lang) },
             { id: 'help', label: g(S.landing.navHelp, lang) },
           ].map((item) =>
@@ -117,7 +212,11 @@ export default function SuvidhaAILanding() {
             ) : (
               <a
                 key={item.id}
-                href="#"
+                href={`#${item.id}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  document.getElementById(item.id)?.scrollIntoView({ behavior: 'smooth' });
+                }}
                 className="text-[12px] font-semibold text-[#57534E] hover:text-[#E8690B] hover:border-b-2 hover:border-[#E8690B] pb-1 transition-all whitespace-nowrap"
               >
                 {item.label}
@@ -201,6 +300,7 @@ export default function SuvidhaAILanding() {
             <div className="max-w-[540px] bg-[#FAF7F2]/95 backdrop-blur-sm border-2 border-[#E7E0D8] rounded-[12px] p-4 mb-6 focus-within:border-[#E8690B] focus-within:bg-white transition-all">
               <div className="flex flex-col sm:flex-row gap-2 items-stretch">
                 <textarea
+                  ref={searchBoxRef}
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -229,20 +329,34 @@ export default function SuvidhaAILanding() {
               </div>
             </div>
 
-            {/* Suggestion Chips */}
+            {/* Suggestion Chips — real backend query (POST /schemes/search
+                via app/full's already-live search+results workflow), no
+                frontend-hardcoded scheme mapping. */}
             <div className="flex flex-wrap gap-2 max-w-[540px] mb-6">
-              {[g(S.landing.chipFarmer, lang), g(S.landing.chipSenior, lang), g(S.landing.chipWoman, lang), g(S.landing.chipStudent, lang), g(S.landing.chipWage, lang), g(S.landing.chipHousing, lang)].map((chip) => (
+              {[
+                { id: 'farmer', label: g(S.landing.chipFarmer, lang) },
+                { id: 'senior', label: g(S.landing.chipSenior, lang) },
+                { id: 'woman', label: g(S.landing.chipWoman, lang) },
+                { id: 'student', label: g(S.landing.chipStudent, lang) },
+                { id: 'wage', label: g(S.landing.chipWage, lang) },
+                { id: 'housing', label: g(S.landing.chipHousing, lang) },
+              ].map((chip) => (
                 <button
-                  key={chip}
+                  key={chip.id}
+                  type="button"
+                  onClick={() => goToDiscovery(CHIP_QUERIES[chip.id])}
                   className="text-[11px] font-semibold px-[13px] py-[5px] rounded border border-[#E7E0D8] bg-white/90 text-[#57534E] hover:border-[#E8690B] hover:text-[#E8690B] transition-colors"
                 >
-                  {chip}
+                  {chip.label}
                 </button>
               ))}
             </div>
 
             {/* Mic Button */}
-            <button className="bg-[#F0FDF4]/95 border-[1.5px] border-[#BBF7D0] rounded-full px-[22px] py-[10px] flex items-center gap-2 hover:bg-[#E8F5E9] transition-colors mb-6">
+            <button
+              className="bg-[#F0FDF4]/95 border-[1.5px] border-[#BBF7D0] rounded-full px-[22px] py-[10px] flex items-center gap-2 hover:bg-[#E8F5E9] transition-colors mb-6"
+              onClick={() => router.push('/simple')}
+            >
               <Mic size={15} className="text-[#1A6B3C]" />
               <span className="text-[13px] font-semibold text-[#1A6B3C]">{g(S.landing.speakLang, lang)}</span>
             </button>
@@ -481,7 +595,7 @@ export default function SuvidhaAILanding() {
       </section>
 
       {/* SECTION 5: DUAL MODE */}
-      <section className="bg-white border-y border-[#E7E0D8] px-5 sm:px-8 lg:px-12 py-[68px]">
+      <section id="about" className="bg-white border-y border-[#E7E0D8] px-5 sm:px-8 lg:px-12 py-[68px]">
         <div className="max-w-7xl mx-auto">
           {/* Header */}
           <div className="text-center mb-10">
@@ -700,7 +814,7 @@ export default function SuvidhaAILanding() {
       </section>
 
       {/* SECTION 7: HOW IT WORKS */}
-      <section className="bg-white border-t border-[#E7E0D8] px-5 sm:px-8 lg:px-12 py-[68px]">
+      <section id="how-it-works" className="bg-white border-t border-[#E7E0D8] px-5 sm:px-8 lg:px-12 py-[68px]">
         <div className="max-w-7xl mx-auto">
           {/* Header */}
           <div className="text-center mb-12">
@@ -729,6 +843,10 @@ export default function SuvidhaAILanding() {
               ].map((item) => (
                 <div
                   key={item.step}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleStepClick(item.step)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleStepClick(item.step); }}
                   className={`rounded-[10px] p-5 text-center relative z-10 transition-all cursor-pointer ${
                     item.highlight ? 'bg-white border-2 border-[#E8690B]' : 'bg-[#FAF7F2] border-[1.5px] border-[#E7E0D8] hover:border-[#E8690B] hover:-translate-y-[3px]'
                   }`}
@@ -799,6 +917,10 @@ export default function SuvidhaAILanding() {
               ].map((item) => (
                 <div
                   key={item.step}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleStepClick(item.step)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleStepClick(item.step); }}
                   className="rounded-[10px] p-5 text-center relative z-10 bg-[#FAF7F2] border-[1.5px] border-[#E7E0D8] hover:border-[#E8690B] hover:-translate-y-[3px] transition-all cursor-pointer"
                 >
                   {/* Step Circle */}
@@ -851,7 +973,7 @@ export default function SuvidhaAILanding() {
       </section>
 
       {/* SECTION 8: AUDIENCE CATEGORY CARDS */}
-      <section className="bg-[#FAF7F2] border-t border-[#E7E0D8] px-5 sm:px-8 lg:px-12 py-[68px]">
+      <section id="schemes" className="bg-[#FAF7F2] border-t border-[#E7E0D8] px-5 sm:px-8 lg:px-12 py-[68px]">
         <div className="max-w-7xl mx-auto">
           {/* Header */}
           <div className="text-center mb-9">
@@ -870,81 +992,104 @@ export default function SuvidhaAILanding() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
             {[
               {
+                key: 'farmers',
                 title: g(S.landing.audFarmers, lang),
                 image: '/images/aud-farmers.jpg',
-                count: gf(S.landing.schemesCount, lang, 6),
                 description: g(S.landing.audFarmersDesc, lang),
                 overlay: '#1B5E20',
                 link: '#1B5E20',
               },
               {
+                key: 'women',
                 title: g(S.landing.audWomen, lang),
                 image: '/images/aud-women.jpg',
-                count: gf(S.landing.schemesCount, lang, 8),
                 description: g(S.landing.audWomenDesc, lang),
                 overlay: '#880E4F',
                 link: '#880E4F',
               },
               {
+                key: 'seniors',
                 title: g(S.landing.audSeniors, lang),
                 image: '/images/aud-seniors.avif',
-                count: gf(S.landing.schemesCount, lang, 3),
                 description: g(S.landing.audSeniorsDesc, lang),
                 overlay: '#0D47A1',
                 link: '#0D47A1',
               },
               {
+                key: 'students',
                 title: g(S.landing.audStudents, lang),
                 image: '/images/aud-students.jpg',
-                count: gf(S.landing.schemesCount, lang, 8),
                 description: g(S.landing.audStudentsDesc, lang),
                 overlay: '#BF360C',
                 link: '#BF360C',
               },
               {
+                key: 'business',
                 title: g(S.landing.audBusiness, lang),
                 image: '/images/aud-business.jpg',
-                count: gf(S.landing.schemesCount, lang, 6),
                 description: g(S.landing.audBusinessDesc, lang),
                 overlay: '#004D40',
                 link: '#004D40',
               },
               {
+                key: 'health',
                 title: g(S.landing.audHealth, lang),
                 image: '/images/aud-health.avif',
-                count: gf(S.landing.schemesCount, lang, 5),
                 description: g(S.landing.audHealthDesc, lang),
                 overlay: '#B71C1C',
                 link: '#B71C1C',
               },
-            ].map((card, idx) => (
-              <div
-                key={idx}
-                className="border border-[#E7E0D8] rounded-[10px] overflow-hidden cursor-pointer hover:border-[#E8690B] hover:shadow-md hover:-translate-y-[3px] transition-all bg-white"
-              >
-                {/* Image Area */}
-                <div className="h-[220px] relative overflow-hidden bg-gradient-to-br from-[#E7E0D8] to-[#D1C5BA] flex items-center justify-center">
-                  {card.image && <Image src={card.image} alt={card.title} fill className="object-cover" />}
-                  <div style={{ backgroundColor: `${card.overlay}26` }} className="absolute inset-0"></div>
-                </div>
-
-                {/* Body */}
-                <div className="p-3 pt-3.5">
-                  <div className="text-[9px] uppercase text-[#A8A29E] font-semibold mb-1" style={{ fontFamily: 'var(--font-mukta)' }}>
-                    {card.count}
+            ].map((card) => {
+              const countState = audienceCounts[card.key];
+              const navigate = () => goToDiscovery(AUDIENCE_QUERIES[card.key]);
+              return (
+                <div
+                  key={card.key}
+                  role="button"
+                  tabIndex={0}
+                  onClick={navigate}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(); }}
+                  className="border border-[#E7E0D8] rounded-[10px] overflow-hidden cursor-pointer hover:border-[#E8690B] hover:shadow-md hover:-translate-y-[3px] transition-all bg-white"
+                >
+                  {/* Image Area */}
+                  <div className="h-[220px] relative overflow-hidden bg-gradient-to-br from-[#E7E0D8] to-[#D1C5BA] flex items-center justify-center">
+                    {card.image && <Image src={card.image} alt={card.title} fill className="object-cover" />}
+                    <div style={{ backgroundColor: `${card.overlay}26` }} className="absolute inset-0"></div>
                   </div>
-                  <h3 className="text-[14px] font-bold text-[#1C1917] mb-1" style={{ fontFamily: 'var(--font-libre-baskerville)' }}>
-                    {card.title}
-                  </h3>
-                  <p className="text-[11px] text-[#57534E] leading-[1.5] mb-2.5" style={{ fontFamily: 'var(--font-mukta)' }}>
-                    {card.description}
-                  </p>
-                  <a href="#" className="text-[11px] font-bold flex items-center gap-1" style={{ color: card.link }}>
-                    {g(S.landing.viewAll, lang)} <ArrowRight size={14} />
-                  </a>
+
+                  {/* Body */}
+                  <div className="p-3 pt-3.5">
+                    <div className="text-[9px] uppercase text-[#A8A29E] font-semibold mb-1 flex items-center gap-1.5" style={{ fontFamily: 'var(--font-mukta)' }}>
+                      {countState.status === 'loading' && <span>{g(S.landing.loadingSchemes, lang)}</span>}
+                      {countState.status === 'ready' && <span>{gf(S.landing.schemesCount, lang, countState.count)}</span>}
+                      {countState.status === 'error' && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); loadAudienceCounts(); }}
+                          className="text-[#DC2626] normal-case font-semibold underline decoration-dotted"
+                        >
+                          {g(S.landing.couldNotLoad, lang)} · {g(S.landing.retry, lang)}
+                        </button>
+                      )}
+                    </div>
+                    <h3 className="text-[14px] font-bold text-[#1C1917] mb-1" style={{ fontFamily: 'var(--font-libre-baskerville)' }}>
+                      {card.title}
+                    </h3>
+                    <p className="text-[11px] text-[#57534E] leading-[1.5] mb-2.5" style={{ fontFamily: 'var(--font-mukta)' }}>
+                      {card.description}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); navigate(); }}
+                      className="text-[11px] font-bold flex items-center gap-1 bg-transparent border-none cursor-pointer p-0"
+                      style={{ color: card.link }}
+                    >
+                      {g(S.landing.viewAll, lang)} <ArrowRight size={14} />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </section>
@@ -998,17 +1143,25 @@ export default function SuvidhaAILanding() {
             <p className="text-[13px] text-[#57534E] leading-[1.7] mb-5">
               {g(S.landing.helpModalBody, lang)}
             </p>
-            <div className="flex items-center justify-between border-t border-[#F0EBE4] pt-4">
+            <div className="border-t border-[#F0EBE4] pt-4 space-y-2">
               <div className="text-[13px] text-[#1C1917]">
                 <span className="font-semibold">{g(S.landing.helpModalHelplineLabel, lang)}:</span> 155261
               </div>
-              <button
-                type="button"
-                onClick={() => setShowHelpModal(false)}
-                className="bg-[#1A6B3C] text-white text-[12px] font-bold rounded-[6px] px-4 py-2 hover:bg-[#155032] transition-colors"
-              >
-                {g(S.landing.helpModalClose, lang)}
-              </button>
+              <div className="text-[13px] text-[#1C1917]">
+                <span className="font-semibold">{g(S.landing.helpModalEmailLabel, lang)}:</span>{' '}
+                <a href="mailto:suvidhaaiofficial@gmail.com" className="text-[#1A6B3C] hover:underline">
+                  suvidhaaiofficial@gmail.com
+                </a>
+              </div>
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowHelpModal(false)}
+                  className="bg-[#1A6B3C] text-white text-[12px] font-bold rounded-[6px] px-4 py-2 hover:bg-[#155032] transition-colors"
+                >
+                  {g(S.landing.helpModalClose, lang)}
+                </button>
+              </div>
             </div>
           </div>
         </div>

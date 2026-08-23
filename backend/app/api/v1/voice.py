@@ -6,6 +6,7 @@ Owned by: Member 3 — Application lifecycle & Voice.
 """
 
 import logging
+import time
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 
@@ -37,14 +38,31 @@ async def transcribe_audio(
             detail="Voice model is not loaded",
         )
 
+    # Route-level timing, separate from voice_service's own internal
+    # write/decode breakdown: `read_elapsed` is (an upper bound on) how long
+    # it took to receive the uploaded audio once this route started running
+    # — the closest server-side proxy for "upload time" available without
+    # instrumenting Starlette's body parsing directly. `transcribe_elapsed`
+    # should match voice_service's own logged write+decode time; logging
+    # both here confirms nothing extra (retries, re-loading, etc) is
+    # happening between the two.
+    request_start = time.perf_counter()
     audio_bytes = await file.read()
+    read_elapsed = time.perf_counter() - request_start
     if not audio_bytes:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty audio file")
 
     try:
+        transcribe_start = time.perf_counter()
         result = voice_service.transcribe(audio_bytes, lang)
+        transcribe_elapsed = time.perf_counter() - transcribe_start
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    logger.info(
+        "voice/transcribe request timing: bytes=%d body_read=%.3fs transcribe_call=%.3fs total=%.3fs",
+        len(audio_bytes), read_elapsed, transcribe_elapsed, time.perf_counter() - request_start,
+    )
 
     return TranscribeOut(**result)
 

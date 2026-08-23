@@ -56,13 +56,10 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index('ix_otp_requests_mobile_expiry', 'otp_requests', ['mobile_number', 'expires_at'], unique=False)
-    op.drop_index('scheme_embedding_idx', table_name='schemes', postgresql_using='ivfflat', postgresql_with={'lists': 100}, postgresql_ops={'embedding': 'vector_cosine_ops'})
-    op.drop_index(op.f('ix_schemes_scheme_code'), table_name='schemes')
-    op.drop_index(op.f('ix_schemes_category'), table_name='schemes')
-    op.drop_table('schemes')
     op.create_table('users',
     sa.Column('id', sa.UUID(), nullable=False),
-    sa.Column('mobile_number', sa.String(length=15), nullable=False),
+    sa.Column('mobile_number', sa.String(length=15), nullable=True),
+    sa.Column('email', sa.String(length=255), nullable=True),
     sa.Column('full_name', sa.String(length=255), nullable=True),
     sa.Column('date_of_birth', sa.Date(), nullable=True),
     sa.Column('is_verified', sa.Boolean(), nullable=False),
@@ -71,6 +68,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_users_mobile_number'), 'users', ['mobile_number'], unique=True)
+    op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
     op.create_table('refresh_tokens',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('user_id', sa.UUID(), nullable=False),
@@ -113,10 +111,6 @@ def downgrade() -> None:
     op.drop_table('refresh_tokens')
     op.drop_index(op.f('ix_users_mobile_number'), table_name='users')
     op.drop_table('users')
-    op.drop_index('scheme_embedding_idx', table_name='schemes', postgresql_using='ivfflat', postgresql_with={'lists': 100}, postgresql_ops={'embedding': 'vector_cosine_ops'})
-    op.drop_index(op.f('ix_schemes_scheme_code'), table_name='schemes')
-    op.drop_index(op.f('ix_schemes_category'), table_name='schemes')
-    op.drop_table('schemes')
     op.drop_index('ix_otp_requests_mobile_expiry', table_name='otp_requests')
     op.drop_table('otp_requests')
     op.drop_table('audit_logs')
