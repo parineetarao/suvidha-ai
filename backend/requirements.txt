@@ -29,10 +29,9 @@ pytest-asyncio==0.25.0
 httpx==0.28.1
 
 email-validator
-sentence-transformers
-scikit-learn
-numpy
-httpx
+sentence-transformers==3.3.1
+scikit-learn==1.6.1
+numpy==1.26.4
 beautifulsoup4
 apscheduler
 
@@ -47,4 +46,3 @@ requests==2.32.3
 # Voice output (Member 3) — server-side TTS so audio works for every
 # language regardless of what voices are installed on the listener's OS
 gTTS==2.5.4
-gtts
