@@ -28,7 +28,7 @@ from faster_whisper import WhisperModel
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL_SIZE = "small"  # CPU-only deployment target; medium/large too slow without GPU
+DEFAULT_MODEL_SIZE = "tiny"  # CPU-only deployment target; medium/large too slow without GPU
 
 SUPPORTED_LANGUAGES = {"en", "hi", "mr", "ta", "te", "kn", "ml", "bn", "gu", "pa"}
 
