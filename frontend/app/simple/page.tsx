@@ -79,6 +79,7 @@ type Message = {
   timestamp: string;
   realResults?: RealSchemeMatch[];
   parsedProfile?: ParsedVoiceProfile;
+  missingFields?: string[];
   // Marks the two pre-conversation greeting bubbles. Their text is looked
   // up live from `greetings[current language]` at render time (see the
   // message-list render below) instead of being frozen in as plain `text`
@@ -1050,16 +1051,90 @@ const botResponses = {
 // — see the B3/B4 data-quality report for why guessing at a translation here
 // would be worse than showing English.
 const MATCH_FACTOR_LABELS: Record<UiLang, Record<string, string>> = {
-  'hi-IN': { occupation: 'पेशा', income: 'आय', state: 'राज्य', gender: 'लिंग', age: 'आयु', semantic_query: 'सिमेंटिक क्वेरी' },
-  'mr-IN': { occupation: 'व्यवसाय', income: 'उत्पन्न', state: 'राज्य', gender: 'लिंग', age: 'वय', semantic_query: 'सिमेंटिक क्वेरी' },
-  'en-IN': { occupation: 'Occupation', income: 'Income', state: 'State', gender: 'Gender', age: 'Age', semantic_query: 'Semantic Query' },
-  'ta-IN': { occupation: 'தொழில்', income: 'வருமானம்', state: 'மாநிலம்', gender: 'பாலினம்', age: 'வயது', semantic_query: 'சொற்பொருள் வினவல்' },
-  'te-IN': { occupation: 'వృత్తి', income: 'ఆదాయం', state: 'రాష్ట్రం', gender: 'లింగం', age: 'వయస్సు', semantic_query: 'సెమాంటిక్ క్వెరీ' },
-  'kn-IN': { occupation: 'ವೃತ್ತಿ', income: 'ಆದಾಯ', state: 'ರಾಜ್ಯ', gender: 'ಲಿಂಗ', age: 'ವಯಸ್ಸು', semantic_query: 'ಸೆಮ್ಯಾಂಟಿಕ್ ಕ್ವೆರಿ' },
-  'ml-IN': { occupation: 'തൊഴിൽ', income: 'വരുമാനം', state: 'സംസ്ഥാനം', gender: 'ലിംഗം', age: 'പ്രായം', semantic_query: 'സെമാന്റിക് ക്വറി' },
-  'bn-IN': { occupation: 'পেশা', income: 'আয়', state: 'রাজ্য', gender: 'লিঙ্গ', age: 'বয়স', semantic_query: 'সিমান্টিক কোয়েরি' },
-  'gu-IN': { occupation: 'વ્યવસાય', income: 'આવક', state: 'રાજ્ય', gender: 'લિંગ', age: 'ઉંમર', semantic_query: 'સિમેન્ટિક ક્વેરી' },
-  'pa-IN': { occupation: 'ਕਿੱਤਾ', income: 'ਆਮਦਨ', state: 'ਰਾਜ', gender: 'ਲਿੰਗ', age: 'ਉਮਰ', semantic_query: 'ਸਿਮੈਂਟਿਕ ਕਿਊਰੀ' },
+  'hi-IN': { occupation: 'पेशा', income: 'आय', state: 'राज्य', gender: 'लिंग', age: 'आयु', semantic_query: 'सिमेंटिक क्वेरी', eligible: 'पात्रता', category: 'वर्ग', disability: 'दिव्यांगता' },
+  'mr-IN': { occupation: 'व्यवसाय', income: 'उत्पन्न', state: 'राज्य', gender: 'लिंग', age: 'वय', semantic_query: 'सिमेंटिक क्वेरी', eligible: 'पात्रता', category: 'प्रवर्ग', disability: 'दिव्यांगत्व' },
+  'en-IN': { occupation: 'Occupation', income: 'Income', state: 'State', gender: 'Gender', age: 'Age', semantic_query: 'Semantic Query', eligible: 'Eligibility', category: 'Category', disability: 'Disability' },
+  'ta-IN': { occupation: 'தொழில்', income: 'வருமானம்', state: 'மாநிலம்', gender: 'பாலினம்', age: 'வயது', semantic_query: 'சொற்பொருள் வினவல்', eligible: 'தகுதி', category: 'பிரிவு', disability: 'மாற்றுத்திறன்' },
+  'te-IN': { occupation: 'వృత్తి', income: 'ఆదాయం', state: 'రాష్ట్రం', gender: 'లింగం', age: 'వయస్సు', semantic_query: 'సెమాంటిక్ క్వెరీ', eligible: 'అర్హత', category: 'వర్గం', disability: 'దివ్యాంగత' },
+  'kn-IN': { occupation: 'ವೃತ್ತಿ', income: 'ಆದಾಯ', state: 'ರಾಜ್ಯ', gender: 'ಲಿಂಗ', age: 'ವಯಸ್ಸು', semantic_query: 'ಸೆಮ್ಯಾಂಟಿಕ್ ಕ್ವೆರಿ', eligible: 'ಅರ್ಹತೆ', category: 'ವರ್ಗ', disability: 'ಅಂಗವೈಕಲ್ಯ' },
+  'ml-IN': { occupation: 'തൊഴിൽ', income: 'വരുമാനം', state: 'സംസ്ഥാനം', gender: 'ലിംഗം', age: 'പ്രായം', semantic_query: 'സെമാന്റിക് ക്വറി', eligible: 'യോഗ്യത', category: 'വിഭാഗം', disability: 'ഭിന്നശേഷി' },
+  'bn-IN': { occupation: 'পেশা', income: 'আয়', state: 'রাজ্য', gender: 'লিঙ্গ', age: 'বয়স', semantic_query: 'সিমান্টিক কোয়েরি', eligible: 'যোগ্যতা', category: 'শ্রেণি', disability: 'প্রতিবন্ধকতা' },
+  'gu-IN': { occupation: 'વ્યવસાય', income: 'આવક', state: 'રાજ્ય', gender: 'લિંગ', age: 'ઉંમર', semantic_query: 'સિમેન્ટિક ક્વેરી', eligible: 'પાત્રતા', category: 'વર્ગ', disability: 'દિવ્યાંગતા' },
+  'pa-IN': { occupation: 'ਕਿੱਤਾ', income: 'ਆਮਦਨ', state: 'ਰਾਜ', gender: 'ਲਿੰਗ', age: 'ਉਮਰ', semantic_query: 'ਸਿਮੈਂਟਿਕ ਕਿਊਰੀ', eligible: 'ਯੋਗਤਾ', category: 'ਵਰਗ', disability: 'ਅਪੰਗਤਾ' },
+};
+
+// Strings for the strict-eligibility parts of POST /schemes/voice-search:
+// the "meets every listed criterion" reason, the extra profile facts the
+// backend now detects, and the `missing_fields` prompt asking the user for
+// the details that would unlock more schemes.
+const STRICT_MATCH_VOCAB: Record<UiLang, {
+  eligibleAll: string;
+  withDisability: string;
+  transgender: string;
+  incomePerYear: (amount: string) => string;
+  missingPrompt: string;
+  fields: Record<string, string>;
+}> = {
+  'hi-IN': {
+    eligibleAll: 'सभी शर्तें पूरी', withDisability: 'दिव्यांग', transgender: 'ट्रांसजेंडर',
+    incomePerYear: (a) => `आय ₹${a}/वर्ष`,
+    missingPrompt: 'और योजनाएँ खोजने के लिए यह भी बताइए:',
+    fields: { state: 'आपका राज्य', occupation: 'आपका काम', category: 'जाति वर्ग (SC/ST/OBC/सामान्य) या BPL', income: 'सालाना आय', age: 'उम्र', gender: 'लिंग', disability: 'क्या आप दिव्यांग हैं' },
+  },
+  'mr-IN': {
+    eligibleAll: 'सर्व अटी पूर्ण', withDisability: 'दिव्यांग', transgender: 'तृतीयपंथी',
+    incomePerYear: (a) => `उत्पन्न ₹${a}/वर्ष`,
+    missingPrompt: 'आणखी योजना शोधण्यासाठी हेही सांगा:',
+    fields: { state: 'तुमचे राज्य', occupation: 'तुमचा व्यवसाय', category: 'प्रवर्ग (SC/ST/OBC/खुला) किंवा BPL', income: 'वार्षिक उत्पन्न', age: 'वय', gender: 'लिंग', disability: 'तुम्ही दिव्यांग आहात का' },
+  },
+  'en-IN': {
+    eligibleAll: 'meets every listed criterion', withDisability: 'person with disability', transgender: 'transgender',
+    incomePerYear: (a) => `income ₹${a}/yr`,
+    missingPrompt: 'To find more schemes for you, also tell me:',
+    fields: { state: 'your state', occupation: 'your occupation', category: 'your category (SC/ST/OBC/General) or BPL status', income: 'your annual income', age: 'your age', gender: 'your gender', disability: 'whether you have a disability' },
+  },
+  'ta-IN': {
+    eligibleAll: 'அனைத்து நிபந்தனைகளும் பூர்த்தி', withDisability: 'மாற்றுத்திறனாளி', transgender: 'திருநங்கை/திருநம்பி',
+    incomePerYear: (a) => `வருமானம் ₹${a}/ஆண்டு`,
+    missingPrompt: 'மேலும் திட்டங்களைக் கண்டறிய இதையும் சொல்லுங்கள்:',
+    fields: { state: 'உங்கள் மாநிலம்', occupation: 'உங்கள் தொழில்', category: 'பிரிவு (SC/ST/OBC/பொது) அல்லது BPL', income: 'ஆண்டு வருமானம்', age: 'வயது', gender: 'பாலினம்', disability: 'நீங்கள் மாற்றுத்திறனாளியா' },
+  },
+  'te-IN': {
+    eligibleAll: 'అన్ని షరతులు నెరవేరాయి', withDisability: 'దివ్యాంగులు', transgender: 'ట్రాన్స్‌జెండర్',
+    incomePerYear: (a) => `ఆదాయం ₹${a}/సంవత్సరం`,
+    missingPrompt: 'మరిన్ని పథకాల కోసం ఇది కూడా చెప్పండి:',
+    fields: { state: 'మీ రాష్ట్రం', occupation: 'మీ వృత్తి', category: 'వర్గం (SC/ST/OBC/జనరల్) లేదా BPL', income: 'వార్షిక ఆదాయం', age: 'వయస్సు', gender: 'లింగం', disability: 'మీరు దివ్యాంగులా' },
+  },
+  'kn-IN': {
+    eligibleAll: 'ಎಲ್ಲಾ ಷರತ್ತುಗಳು ಪೂರೈಸಿವೆ', withDisability: 'ಅಂಗವಿಕಲ', transgender: 'ಲಿಂಗತ್ವ ಅಲ್ಪಸಂಖ್ಯಾತ',
+    incomePerYear: (a) => `ಆದಾಯ ₹${a}/ವರ್ಷ`,
+    missingPrompt: 'ಇನ್ನಷ್ಟು ಯೋಜನೆಗಳಿಗಾಗಿ ಇದನ್ನೂ ತಿಳಿಸಿ:',
+    fields: { state: 'ನಿಮ್ಮ ರಾಜ್ಯ', occupation: 'ನಿಮ್ಮ ವೃತ್ತಿ', category: 'ವರ್ಗ (SC/ST/OBC/ಸಾಮಾನ್ಯ) ಅಥವಾ BPL', income: 'ವಾರ್ಷಿಕ ಆದಾಯ', age: 'ವಯಸ್ಸು', gender: 'ಲಿಂಗ', disability: 'ನೀವು ಅಂಗವಿಕಲರೇ' },
+  },
+  'ml-IN': {
+    eligibleAll: 'എല്ലാ നിബന്ധനകളും പാലിക്കുന്നു', withDisability: 'ഭിന്നശേഷിക്കാർ', transgender: 'ട്രാൻസ്ജെൻഡർ',
+    incomePerYear: (a) => `വരുമാനം ₹${a}/വർഷം`,
+    missingPrompt: 'കൂടുതൽ പദ്ധതികൾ കണ്ടെത്താൻ ഇതും പറയൂ:',
+    fields: { state: 'നിങ്ങളുടെ സംസ്ഥാനം', occupation: 'നിങ്ങളുടെ തൊഴിൽ', category: 'വിഭാഗം (SC/ST/OBC/ജനറൽ) അല്ലെങ്കിൽ BPL', income: 'വാർഷിക വരുമാനം', age: 'പ്രായം', gender: 'ലിംഗം', disability: 'നിങ്ങൾ ഭിന്നശേഷിക്കാരാണോ' },
+  },
+  'bn-IN': {
+    eligibleAll: 'সব শর্ত পূরণ', withDisability: 'প্রতিবন্ধী', transgender: 'রূপান্তরকামী',
+    incomePerYear: (a) => `আয় ₹${a}/বছর`,
+    missingPrompt: 'আরও প্রকল্প খুঁজতে এটাও বলুন:',
+    fields: { state: 'আপনার রাজ্য', occupation: 'আপনার পেশা', category: 'শ্রেণি (SC/ST/OBC/সাধারণ) বা BPL', income: 'বার্ষিক আয়', age: 'বয়স', gender: 'লিঙ্গ', disability: 'আপনি কি প্রতিবন্ধী' },
+  },
+  'gu-IN': {
+    eligibleAll: 'બધી શરતો પૂરી', withDisability: 'દિવ્યાંગ', transgender: 'ટ્રાન્સજેન્ડર',
+    incomePerYear: (a) => `આવક ₹${a}/વર્ષ`,
+    missingPrompt: 'વધુ યોજનાઓ શોધવા માટે આ પણ જણાવો:',
+    fields: { state: 'તમારું રાજ્ય', occupation: 'તમારો વ્યવસાય', category: 'વર્ગ (SC/ST/OBC/સામાન્ય) અથવા BPL', income: 'વાર્ષિક આવક', age: 'ઉંમર', gender: 'લિંગ', disability: 'શું તમે દિવ્યાંગ છો' },
+  },
+  'pa-IN': {
+    eligibleAll: 'ਸਾਰੀਆਂ ਸ਼ਰਤਾਂ ਪੂਰੀਆਂ', withDisability: 'ਅਪਾਹਜ', transgender: 'ਟ੍ਰਾਂਸਜੈਂਡਰ',
+    incomePerYear: (a) => `ਆਮਦਨ ₹${a}/ਸਾਲ`,
+    missingPrompt: 'ਹੋਰ ਯੋਜਨਾਵਾਂ ਲੱਭਣ ਲਈ ਇਹ ਵੀ ਦੱਸੋ:',
+    fields: { state: 'ਤੁਹਾਡਾ ਰਾਜ', occupation: 'ਤੁਹਾਡਾ ਕਿੱਤਾ', category: 'ਵਰਗ (SC/ST/OBC/ਜਨਰਲ) ਜਾਂ BPL', income: 'ਸਾਲਾਨਾ ਆਮਦਨ', age: 'ਉਮਰ', gender: 'ਲਿੰਗ', disability: 'ਕੀ ਤੁਸੀਂ ਅਪਾਹਜ ਹੋ' },
+  },
 };
 
 const MATCH_VOCAB: Record<UiLang, {
@@ -1170,7 +1245,12 @@ function docRequiredWarning(docLabel: string, lang: UiLang): string {
 function translateMatchedValue(factor: string, matched: string, lang: UiLang): string {
   if (lang === 'en-IN') return matched;
   const vocab = MATCH_VOCAB[lang];
+  const strict = STRICT_MATCH_VOCAB[lang];
   switch (factor) {
+    case 'eligible':
+      return strict.eligibleAll;
+    case 'disability':
+      return strict.withDisability;
     case 'income': {
       if (matched === 'no income cap') return vocab.noIncomeCap;
       const m = matched.match(/^≤\s*₹([\d,]+)$/);
@@ -1181,9 +1261,10 @@ function translateMatchedValue(factor: string, matched: string, lang: UiLang): s
     case 'semantic_query':
       return matched === 'relevant to your query' ? vocab.relevantToQuery : matched;
     case 'gender':
-      return vocab.genders[matched] ?? matched;
+      return matched === 'transgender' ? strict.transgender : vocab.genders[matched] ?? matched;
     case 'occupation':
-      return vocab.occupations[matched] ?? matched;
+      // The backend now normalizes "business_owner" to "business owner".
+      return vocab.occupations[matched] ?? vocab.occupations[matched.replace(/ /g, '_')] ?? matched;
     case 'age': {
       const m = matched.match(/^(\d+)-(\d+|no cap) yrs$/);
       if (!m) return matched;
@@ -2474,7 +2555,7 @@ export default function SimpleModePage() {
       }, 1200)
 
       setTimeout(() => {
-        addMsg({ type: 'schemes', category, realResults: results, parsedProfile: data.parsed_profile, timestamp: getTime() })
+        addMsg({ type: 'schemes', category, realResults: results, parsedProfile: data.parsed_profile, missingFields: data.missing_fields, timestamp: getTime() })
         const lang = selectedLangRef.current as UiLang;
         // Read out up to the top 6 matches (not just 3) — this is the only
         // place the scheme results themselves get spoken; if it's cut short
@@ -2924,10 +3005,22 @@ export default function SimpleModePage() {
             if (message.type === 'schemes' && message.realResults) {
               const results = message.realResults;
               const profile = message.parsedProfile;
+              const strict = STRICT_MATCH_VOCAB[lang];
               const detectedBits = [
-                profile?.gender ? (profile.gender === 'female' ? (ui.detectedFemale ?? 'woman') : (ui.detectedMale ?? 'man')) : null,
+                profile?.gender
+                  ? profile.gender === 'female' ? (ui.detectedFemale ?? 'woman')
+                  : profile.gender === 'male' ? (ui.detectedMale ?? 'man')
+                  : strict.transgender
+                  : null,
                 profile?.age != null ? `${profile.age} ${ui.yearsOld ?? 'yrs'}` : null,
+                ...(profile?.occupations ?? []).map((o) => translateMatchedValue('occupation', o, lang)),
+                profile?.state ?? null,
+                profile?.caste ?? null,
+                profile?.bpl ? 'BPL' : null,
+                profile?.annual_income != null ? strict.incomePerYear(profile.annual_income.toLocaleString('en-IN')) : null,
+                profile?.disability ? strict.withDisability : null,
               ].filter(Boolean);
+              const missingFields = message.missingFields ?? [];
               return (
                 <div key={message.id} className="self-start w-full">
                   {detectedBits.length > 0 && (
@@ -2974,6 +3067,11 @@ export default function SimpleModePage() {
                       );
                     })}
                   </div>
+                  )}
+                  {missingFields.length > 0 && (
+                    <div className="mt-1 bg-[#F0F9FF] border border-[#BAE6FD] rounded-[10px] py-2 px-3 max-w-[320px] text-[11px] text-[#075985] leading-[1.45]">
+                      {strict.missingPrompt} {missingFields.map((f) => strict.fields[f] ?? f).join(', ')}
+                    </div>
                   )}
                 </div>
               );

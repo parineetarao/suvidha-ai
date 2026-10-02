@@ -150,6 +150,12 @@ class ParsedVoiceProfile(BaseModel):
 
     gender: str | None = None
     age: int | None = None
+    state: str | None = None
+    occupations: list[str] = Field(default_factory=list)
+    caste: str | None = None  # SC / ST / OBC / General
+    bpl: bool | None = None
+    annual_income: int | None = None
+    disability: bool | None = None
 
 
 class VoiceSchemeSearchIn(BaseModel):
@@ -168,6 +174,10 @@ class VoiceSchemeSearchIn(BaseModel):
 class VoiceSchemeSearchOut(BaseModel):
     parsed_profile: ParsedVoiceProfile
     results: list[SchemeMatch]
+    # Profile fields the user didn't mention that would make more schemes
+    # eligible (state / occupation / category / income / age / gender /
+    # disability), most impactful first — the UI asks for these.
+    missing_fields: list[str] = Field(default_factory=list)
 
 
 class SchemeCompareIn(BaseModel):

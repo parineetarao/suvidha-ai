@@ -84,8 +84,14 @@ async def request_otp(
         if mode == "register" and existing_user is not None:
             raise AccountAlreadyExists()
 
+    return await _send_new_otp(db, mobile_number, email, purpose="login")
+
+
+async def _send_new_otp(
+    db: Session, mobile_number: str | None, email: str | None, purpose: str
+) -> tuple[uuid.UUID, int]:
     code = generate_otp()
-    otp_hash = hash_otp(code, identifier)
+    otp_hash = hash_otp(code, mobile_number or email)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=OTP_TTL_MINUTES)
 
     otp_request = OTPRequest(
@@ -93,6 +99,7 @@ async def request_otp(
         email=email,
         otp_hash=otp_hash,
         expires_at=expires_at,
+        purpose=purpose,
     )
     db.add(otp_request)
     db.flush()
@@ -118,29 +125,7 @@ def verify_otp(
     email: str | None = None,
     full_name: str | None = None,
 ) -> tuple[User, str, str]:
-    identifier = mobile_number or email
-    filter_col = OTPRequest.mobile_number if mobile_number else OTPRequest.email
-
-    otp_request = db.scalar(
-        select(OTPRequest)
-        .where(filter_col == identifier, OTPRequest.consumed == False)  # noqa: E712
-        .order_by(OTPRequest.created_at.desc())
-    )
-
-    if otp_request is None:
-        raise InvalidCredentials()
-    if otp_request.expires_at < datetime.now(timezone.utc):
-        raise OTPExpired()
-    if otp_request.attempts >= OTP_VERIFY_ATTEMPT_LIMIT:
-        raise TooManyAttempts("Too many incorrect attempts for this OTP. Please request a new one.")
-
-    submitted_hash = hash_otp(code, identifier)
-    if submitted_hash != otp_request.otp_hash:
-        otp_request.attempts += 1
-        db.commit()
-        raise InvalidCredentials()
-
-    otp_request.consumed = True
+    _consume_otp(db, code, mobile_number, email, purpose="login")
 
     user_filter = User.mobile_number == mobile_number if mobile_number else User.email == email
     user = db.scalar(select(User).where(user_filter))
@@ -159,6 +144,94 @@ def verify_otp(
     db.commit()
     db.refresh(user)
     return user, access_token, raw_refresh_token
+
+def _consume_otp(
+    db: Session, code: str, mobile_number: str | None, email: str | None, purpose: str
+) -> None:
+    """Checks `code` against the newest unconsumed OTP of this purpose for
+    this identifier and marks it consumed. Raises on every failure mode;
+    a wrong guess is counted (and committed) before raising."""
+    identifier = mobile_number or email
+    filter_col = OTPRequest.mobile_number if mobile_number else OTPRequest.email
+
+    otp_request = db.scalar(
+        select(OTPRequest)
+        .where(
+            filter_col == identifier,
+            OTPRequest.consumed == False,  # noqa: E712
+            OTPRequest.purpose == purpose,
+        )
+        .order_by(OTPRequest.created_at.desc())
+    )
+
+    if otp_request is None:
+        raise InvalidCredentials()
+    if otp_request.expires_at < datetime.now(timezone.utc):
+        raise OTPExpired()
+    if otp_request.attempts >= OTP_VERIFY_ATTEMPT_LIMIT:
+        raise TooManyAttempts("Too many incorrect attempts for this OTP. Please request a new one.")
+
+    submitted_hash = hash_otp(code, identifier)
+    if submitted_hash != otp_request.otp_hash:
+        otp_request.attempts += 1
+        db.commit()
+        raise InvalidCredentials()
+
+    otp_request.consumed = True
+
+
+# --- Backup contact (account recovery, self-service) ---
+#
+# A citizen's account is reachable only through the contacts on it, and
+# signup records just one. Linking a second, verified contact (mobile if
+# they signed up by email, or vice versa) is what lets them log in again
+# if they lose the first one — verify_otp() already finds a user by
+# either column.
+
+def _contact_owner(db: Session, mobile_number: str | None, email: str | None) -> User | None:
+    user_filter = User.mobile_number == mobile_number if mobile_number else User.email == email
+    return db.scalar(select(User).where(user_filter))
+
+
+async def request_contact_otp(
+    db: Session, user: User, mobile_number: str | None = None, email: str | None = None
+) -> tuple[uuid.UUID, int]:
+    await rate_limit.enforce_otp_request_limit(mobile_number or email)
+    owner = _contact_owner(db, mobile_number, email)
+    if owner is not None:
+        if owner.id == user.id:
+            raise AccountAlreadyExists("This contact is already on your account.")
+        raise AccountAlreadyExists("This contact is already used by another account.")
+    return await _send_new_otp(db, mobile_number, email, purpose="link_contact")
+
+
+def verify_contact_otp(
+    db: Session, user: User, code: str, mobile_number: str | None = None, email: str | None = None
+) -> User:
+    _consume_otp(db, code, mobile_number, email, purpose="link_contact")
+    # Re-checked after the code: another account could have claimed this
+    # contact during the 5-minute window.
+    if _contact_owner(db, mobile_number, email) is not None:
+        db.rollback()
+        raise AccountAlreadyExists("This contact is already used by another account.")
+    if mobile_number:
+        user.mobile_number = mobile_number
+    else:
+        user.email = email
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def revoke_all_refresh_tokens(db: Session, user_id: uuid.UUID) -> None:
+    """Signs a user out everywhere — used when an admin moves their account
+    to a new contact, so whoever holds the old device/email loses access."""
+    now = datetime.now(timezone.utc)
+    for token in db.scalars(
+        select(RefreshToken).where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
+    ):
+        token.revoked_at = now
+
 
 def refresh_access_token(db: Session, raw_refresh_token: str) -> tuple[str, str]:
     """

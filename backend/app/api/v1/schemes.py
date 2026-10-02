@@ -43,7 +43,7 @@ from app.schemas.scheme import (
     VoiceSchemeSearchIn,
     VoiceSchemeSearchOut,
 )
-from app.services.matching_service import UserProfile, filter_and_score, get_matches
+from app.services.matching_service import UserProfile, get_matches, match_schemes as strict_match
 from app.services.search_service import hybrid_search
 from app.services.voice_profile_service import parse_profile
 
@@ -165,17 +165,25 @@ def search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
 
 @router.post("/voice-search", response_model=VoiceSchemeSearchOut)
 def voice_search_schemes(body: VoiceSchemeSearchIn, db: Session = Depends(get_db)):
-    """Public — no auth. Takes the FULL transcribed sentence from
-    POST /voice/transcribe, parses gender/age out of it, ranks every real
-    published scheme by relevance to the sentence (same scoring path as
-    POST /schemes/search), then hard-filters + re-scores using each
-    scheme's actual eligibility_rules (gender/min_age/max_age) against the
-    parsed profile — so two different speakers stating different
-    gender/age genuinely get different result sets, not the same fixed
-    list. Exists because /schemes/match needs auth that isn't wired up
-    yet (see get_current_user_profile above)."""
+    """Public — no auth. Takes the FULL sentence the user spoke or typed,
+    parses their eligibility profile out of it (gender, age, state,
+    occupation, caste/BPL, income, disability), and returns only the
+    published schemes whose every eligibility rule that profile satisfies,
+    ranked by how specifically each scheme targets them. `missing_fields`
+    says which unmentioned details would unlock more schemes. Exists
+    because /schemes/match needs auth that isn't wired up yet (see
+    get_current_user_profile above)."""
     parsed = parse_profile(body.text, body.language)
-    profile = UserProfile(gender=parsed["gender"], age=parsed["age"])
+    profile = UserProfile(
+        gender=parsed["gender"],
+        age=parsed["age"],
+        state_code=parsed["state"],
+        occupations=parsed["occupations"],
+        category=parsed["caste"],
+        bpl=parsed["bpl"],
+        annual_income_inr=parsed["annual_income"],
+        disability_status=parsed["disability"],
+    )
 
     stmt = select(Scheme).where(Scheme.is_published.is_(True))
     all_schemes = list(db.scalars(stmt).all())
@@ -184,11 +192,12 @@ def voice_search_schemes(body: VoiceSchemeSearchIn, db: Session = Depends(get_db
     if embedding_service.is_ready:
         query_embedding = np.array(embedding_service.encode(body.text))
 
-    matches = filter_and_score(all_schemes, profile, query_embedding, limit=body.limit)
+    outcome = strict_match(all_schemes, profile, query_embedding, limit=body.limit)
 
     return VoiceSchemeSearchOut(
-        parsed_profile=ParsedVoiceProfile(gender=parsed["gender"], age=parsed["age"]),
-        results=[_to_scheme_match(r, body.language) for r in matches],
+        parsed_profile=ParsedVoiceProfile(**parsed),
+        results=[_to_scheme_match(r, body.language) for r in outcome.results],
+        missing_fields=outcome.missing_fields,
     )
 
 

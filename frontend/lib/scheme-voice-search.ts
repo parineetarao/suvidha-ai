@@ -1,8 +1,8 @@
 /**
  * Client binding for POST /schemes/voice-search — the real, unauthenticated
  * voice -> scheme pipeline. Takes the full transcribed sentence (not a
- * keyword), parses gender/age server-side, and returns real published
- * schemes from the DB, hard-filtered + scored against those parsed fields.
+ * keyword), parses the user's eligibility profile server-side, and returns
+ * only the published schemes they are eligible for, scored by fit.
  * See backend/app/api/v1/schemes.py's voice_search_schemes.
  */
 
@@ -26,11 +26,21 @@ export interface RealSchemeMatch {
 export interface ParsedVoiceProfile {
   gender: string | null
   age: number | null
+  state: string | null
+  occupations: string[]
+  caste: string | null // SC / ST / OBC / General
+  bpl: boolean | null
+  annual_income: number | null
+  disability: boolean | null
 }
 
 export interface VoiceSchemeSearchOut {
   parsed_profile: ParsedVoiceProfile
+  // Only schemes whose every eligibility rule the sentence satisfies.
   results: RealSchemeMatch[]
+  // Details the user didn't mention that would unlock more schemes
+  // (state / occupation / category / income / age / gender / disability).
+  missing_fields: string[]
 }
 
 export function searchSchemesFromVoiceText(

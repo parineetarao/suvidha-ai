@@ -1,29 +1,66 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { useAuth, ApiError } from "@/lib/auth-context"
+import { useAuth } from "@/lib/auth-context"
+import { adminApi, setAdminToken } from "@/lib/admin-api"
+import {
+  AuthCard, CodeField, ErrorText, Field, Notice, PrimaryButton, Segmented, TextButton,
+  contactLabel, errorMessage, parseContact,
+} from "@/components/auth-ui"
+
+type Role = "citizen" | "admin"
 
 export default function LoginPage() {
+  const [role, setRole] = useState<Role>("citizen")
+
+  // /login?as=admin opens straight on the admin form.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("as") === "admin") setRole("admin")
+  }, [])
+
+  return (
+    <AuthCard title="Log in" subtitle="Choose how you use SuvidhaAI.">
+      <Segmented
+        label="Account type"
+        value={role}
+        onChange={setRole}
+        options={[
+          { value: "citizen", label: "Citizen" },
+          { value: "admin", label: "Admin" },
+        ]}
+      />
+      {role === "citizen" ? <CitizenLogin /> : <AdminLogin />}
+    </AuthCard>
+  )
+}
+
+function CitizenLogin() {
   const router = useRouter()
   const { requestOtp, verifyOtp } = useAuth()
 
-  const [step, setStep] = useState<"email" | "code">("email")
-  const [email, setEmail] = useState("")
+  const [step, setStep] = useState<"contact" | "code">("contact")
+  const [contactInput, setContactInput] = useState("")
   const [code, setCode] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const contact = parseContact(contactInput)
 
   async function handleRequestOtp(e: React.FormEvent) {
     e.preventDefault()
+    if (!contact) {
+      setError("Enter a valid email address or 10-digit mobile number.")
+      return
+    }
     setError(null)
     setLoading(true)
     try {
-      await requestOtp({ email, mode: "login"  })
+      await requestOtp({ ...contact, mode: "login" })
+      setCode("")
       setStep("code")
     } catch (err) {
-      setError(err instanceof ApiError ? String(err.message) : "Something went wrong. Try again.")
+      setError(errorMessage(err, "Something went wrong. Try again."))
     } finally {
       setLoading(false)
     }
@@ -31,98 +68,127 @@ export default function LoginPage() {
 
   async function handleVerify(e: React.FormEvent) {
     e.preventDefault()
+    if (!contact) return
     setError(null)
     setLoading(true)
     try {
-      await verifyOtp({ email, code })
+      await verifyOtp({ ...contact, code })
       router.push("/")
     } catch (err) {
-      setError(err instanceof ApiError ? String(err.message) : "Invalid code. Try again.")
+      setError(errorMessage(err, "Invalid code. Try again."))
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="min-h-screen bg-[#FAF7F2] flex items-center justify-center px-5 py-16">
-      <div className="w-full max-w-sm bg-white border border-[#E7E0D8] rounded-[8px] p-8">
-        <h1 className="text-[22px] font-semibold text-[#1A1A1A] mb-1">Log in</h1>
-        <p className="text-[13px] text-[#57534E] mb-6">
-          {step === "email"
-            ? "Enter your email to receive a verification code."
-            : `We sent a 6-digit code to ${email}.`}
-        </p>
+    <>
+      <Segmented
+        label="New or existing citizen"
+        value="existing"
+        onChange={(v) => v === "new" && router.push("/register")}
+        options={[
+          { value: "existing", label: "I have an account" },
+          { value: "new", label: "I'm new" },
+        ]}
+      />
 
-        {step === "email" && (
-          <form onSubmit={handleRequestOtp} className="space-y-4">
-            <div>
-              <label htmlFor="email" className="mb-1 block text-[12px] font-medium text-[#57534E]">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full bg-[#FAF7F2] border border-[#E7E0D8] rounded-[5px] px-3 py-2 text-[14px] text-[#1A1A1A] outline-none focus:border-[#1A6B3C]"
-                placeholder="you@example.com"
-              />
-            </div>
-            {error && <p className="text-[12px] text-red-600">{error}</p>}
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-[#1A6B3C] text-white text-[13px] rounded-[5px] px-4 py-2.5 hover:bg-[#155032] transition-colors disabled:opacity-50"
-            >
-              {loading ? "Sending..." : "Send code"}
-            </button>
-          </form>
-        )}
+      {step === "contact" && (
+        <form onSubmit={handleRequestOtp} className="space-y-4">
+          <Field
+            id="contact"
+            label="Email or mobile number"
+            hint="We'll send a 6-digit code — citizens don't need a password."
+            type="text"
+            autoComplete="username"
+            required
+            value={contactInput}
+            onChange={(e) => setContactInput(e.target.value)}
+            placeholder="you@example.com or 98765 43210"
+          />
+          <ErrorText error={error} />
+          <PrimaryButton loading={loading} loadingText="Sending...">Send code</PrimaryButton>
+        </form>
+      )}
 
-        {step === "code" && (
-          <form onSubmit={handleVerify} className="space-y-4">
-            <div>
-              <label htmlFor="code" className="mb-1 block text-[12px] font-medium text-[#57534E]">
-                Verification code
-              </label>
-              <input
-                id="code"
-                type="text"
-                inputMode="numeric"
-                maxLength={6}
-                required
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                className="w-full bg-[#FAF7F2] border border-[#E7E0D8] rounded-[5px] px-3 py-2 text-[14px] text-[#1A1A1A] tracking-[0.3em] text-center outline-none focus:border-[#1A6B3C]"
-                placeholder="000000"
-              />
-            </div>
-            {error && <p className="text-[12px] text-red-600">{error}</p>}
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-[#1A6B3C] text-white text-[13px] rounded-[5px] px-4 py-2.5 hover:bg-[#155032] transition-colors disabled:opacity-50"
-            >
-              {loading ? "Verifying..." : "Log in"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setStep("email")}
-              className="w-full text-[12px] text-[#57534E] underline"
-            >
-              Use a different email
-            </button>
-          </form>
-        )}
+      {step === "code" && contact && (
+        <form onSubmit={handleVerify} className="space-y-4">
+          <p className="text-[13px] text-[#57534E]">We sent a 6-digit code to {contactLabel(contact)}.</p>
+          <CodeField value={code} onChange={setCode} />
+          <ErrorText error={error} />
+          <PrimaryButton loading={loading} loadingText="Verifying...">Log in</PrimaryButton>
+          <TextButton onClick={() => { setStep("contact"); setError(null) }}>Use a different email or mobile</TextButton>
+        </form>
+      )}
 
-        <p className="mt-6 text-center text-[12px] text-[#57534E]">
-          New here?{" "}
-          <Link href="/register" className="text-[#1A6B3C] font-medium underline">
-            Create an account
-          </Link>
-        </p>
+      <p className="mt-6 text-center text-[12px] text-[#57534E]">
+        Can&apos;t receive the code?{" "}
+        <Link href="/recover" className="text-[#1A6B3C] font-medium underline">Recover your account</Link>
+      </p>
+    </>
+  )
+}
+
+function AdminLogin() {
+  const router = useRouter()
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setLoading(true)
+    try {
+      const { access_token } = await adminApi.login(email.trim(), password)
+      setAdminToken(access_token)
+      router.push("/admin")
+    } catch (err) {
+      setError(errorMessage(err, "Could not log in. Try again."))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Field
+          id="admin-email"
+          label="Admin email"
+          type="email"
+          autoComplete="username"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="admin@example.com"
+        />
+        <div>
+          <Field
+            id="admin-password"
+            label="Password"
+            type="password"
+            autoComplete="current-password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <div className="mt-1 text-right">
+            <Link href="/admin/forgot-password" className="text-[12px] text-[#1A6B3C] underline">
+              Forgot password?
+            </Link>
+          </div>
+        </div>
+        <ErrorText error={error} />
+        <PrimaryButton loading={loading} loadingText="Logging in...">Log in as admin</PrimaryButton>
+      </form>
+      <div className="mt-5">
+        <Notice>
+          New admin? There is no public admin sign-up. A super admin creates your account from the admin
+          dashboard and shares your first password; change it after you log in.
+        </Notice>
       </div>
-    </div>
+    </>
   )
 }

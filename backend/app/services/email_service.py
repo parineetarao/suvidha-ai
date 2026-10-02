@@ -21,7 +21,24 @@ class EmailDeliveryError(Exception):
 async def send_otp_email(email: str, code: str) -> bool:
     if settings.email_mode == "mock":
         return _send_mock(email, code)
-    return _send_live(email, code)
+    return _send_live(
+        email,
+        "Your SuvidhaAI verification code",
+        f"Your SuvidhaAI verification code is: {code}\n\nThis code expires in 5 minutes.",
+    )
+
+
+async def send_admin_reset_email(email: str, code: str, ttl_minutes: int) -> bool:
+    if settings.email_mode == "mock":
+        logger.info("[MOCK EMAIL] Admin password reset code for %s is %s", email, code)
+        return True
+    return _send_live(
+        email,
+        "Reset your SuvidhaAI admin password",
+        f"Your SuvidhaAI admin password reset code is: {code}\n\n"
+        f"It expires in {ttl_minutes} minutes. If you didn't ask to reset your "
+        "password, ignore this email — your password has not been changed.",
+    )
 
 
 def _send_mock(email: str, code: str) -> bool:
@@ -29,9 +46,9 @@ def _send_mock(email: str, code: str) -> bool:
     return True
 
 
-def _send_live(email: str, code: str) -> bool:
-    msg = MIMEText(f"Your SuvidhaAI verification code is: {code}\n\nThis code expires in 5 minutes.")
-    msg["Subject"] = "Your SuvidhaAI verification code"
+def _send_live(email: str, subject: str, body: str) -> bool:
+    msg = MIMEText(body)
+    msg["Subject"] = subject
     msg["From"] = settings.email_from
     msg["To"] = email
 

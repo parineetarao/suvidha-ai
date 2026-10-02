@@ -37,6 +37,19 @@ def _get_redis() -> redis.Redis:
     return _redis_client
 
 
+async def enforce_limit(key: str, limit: int, window_seconds: int, message: str) -> None:
+    """Generic fixed-window limiter (same INCR + first-hit EXPIRE pattern
+    as enforce_otp_request_limit below), for the account-recovery endpoints
+    that need throttling but aren't OTP requests."""
+    r = _get_redis()
+    redis_key = f"rate_limit:{key}"
+    count = await r.incr(redis_key)
+    if count == 1:
+        await r.expire(redis_key, window_seconds)
+    if count > limit:
+        raise TooManyAttempts(message)
+
+
 async def enforce_otp_request_limit(mobile_number: str) -> None:
     """
     Raises TooManyAttempts if this mobile number has requested more than
