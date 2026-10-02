@@ -3,28 +3,38 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { useAuth, ApiError } from "@/lib/auth-context"
+import { useAuth } from "@/lib/auth-context"
+import {
+  AuthCard, CodeField, ErrorText, Field, Notice, PrimaryButton, Segmented, TextButton,
+  contactLabel, errorMessage, parseContact,
+} from "@/components/auth-ui"
 
 export default function RegisterPage() {
   const router = useRouter()
   const { requestOtp, verifyOtp } = useAuth()
 
   const [step, setStep] = useState<"details" | "code">("details")
-  const [email, setEmail] = useState("")
+  const [contactInput, setContactInput] = useState("")
   const [fullName, setFullName] = useState("")
   const [code, setCode] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const contact = parseContact(contactInput)
 
   async function handleRequestOtp(e: React.FormEvent) {
     e.preventDefault()
+    if (!contact) {
+      setError("Enter a valid email address or 10-digit mobile number.")
+      return
+    }
     setError(null)
     setLoading(true)
     try {
-      await requestOtp({ email, mode: "register" })
+      await requestOtp({ ...contact, mode: "register" })
+      setCode("")
       setStep("code")
     } catch (err) {
-      setError(err instanceof ApiError ? String(err.message) : "Something went wrong. Try again.")
+      setError(errorMessage(err, "Something went wrong. Try again."))
     } finally {
       setLoading(false)
     }
@@ -32,112 +42,76 @@ export default function RegisterPage() {
 
   async function handleVerify(e: React.FormEvent) {
     e.preventDefault()
+    if (!contact) return
     setError(null)
     setLoading(true)
     try {
-      await verifyOtp({ email, code, full_name: fullName })
-      router.push("/")
+      await verifyOtp({ ...contact, code, full_name: fullName })
+      // Straight to account settings so they can add a backup contact —
+      // the only self-service way back in if they lose this one.
+      router.push("/account?welcome=1")
     } catch (err) {
-      setError(err instanceof ApiError ? String(err.message) : "Invalid code. Try again.")
+      setError(errorMessage(err, "Invalid code. Try again."))
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="min-h-screen bg-[#FAF7F2] flex items-center justify-center px-5 py-16">
-      <div className="w-full max-w-sm bg-white border border-[#E7E0D8] rounded-[8px] p-8">
-        <h1 className="text-[22px] font-semibold text-[#1A1A1A] mb-1">Create an account</h1>
-        <p className="text-[13px] text-[#57534E] mb-6">
-          {step === "details"
-            ? "Tell us a little about you to get started."
-            : `We sent a 6-digit code to ${email}.`}
-        </p>
+    <AuthCard title="Create an account" subtitle="Citizens sign up with an email or mobile number — no password needed.">
+      <Segmented
+        label="New or existing citizen"
+        value="new"
+        onChange={(v) => v === "existing" && router.push("/login")}
+        options={[
+          { value: "existing", label: "I have an account" },
+          { value: "new", label: "I'm new" },
+        ]}
+      />
 
-        {step === "details" && (
-          <form onSubmit={handleRequestOtp} className="space-y-4">
-            <div>
-              <label htmlFor="fullName" className="mb-1 block text-[12px] font-medium text-[#57534E]">
-                Full name
-              </label>
-              <input
-                id="fullName"
-                type="text"
-                required
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                className="w-full bg-[#FAF7F2] border border-[#E7E0D8] rounded-[5px] px-3 py-2 text-[14px] text-[#1A1A1A] outline-none focus:border-[#1A6B3C]"
-                placeholder="Your name"
-              />
-            </div>
-            <div>
-              <label htmlFor="email" className="mb-1 block text-[12px] font-medium text-[#57534E]">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full bg-[#FAF7F2] border border-[#E7E0D8] rounded-[5px] px-3 py-2 text-[14px] text-[#1A1A1A] outline-none focus:border-[#1A6B3C]"
-                placeholder="you@example.com"
-              />
-            </div>
-            {error && <p className="text-[12px] text-red-600">{error}</p>}
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-[#1A6B3C] text-white text-[13px] rounded-[5px] px-4 py-2.5 hover:bg-[#155032] transition-colors disabled:opacity-50"
-            >
-              {loading ? "Sending..." : "Send code"}
-            </button>
-          </form>
-        )}
+      {step === "details" && (
+        <form onSubmit={handleRequestOtp} className="space-y-4">
+          <Field
+            id="fullName"
+            label="Full name"
+            type="text"
+            autoComplete="name"
+            required
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            placeholder="Your name"
+          />
+          <Field
+            id="contact"
+            label="Email or mobile number"
+            type="text"
+            autoComplete="username"
+            required
+            value={contactInput}
+            onChange={(e) => setContactInput(e.target.value)}
+            placeholder="you@example.com or 98765 43210"
+          />
+          <ErrorText error={error} />
+          <PrimaryButton loading={loading} loadingText="Sending...">Send code</PrimaryButton>
+        </form>
+      )}
 
-        {step === "code" && (
-          <form onSubmit={handleVerify} className="space-y-4">
-            <div>
-              <label htmlFor="code" className="mb-1 block text-[12px] font-medium text-[#57534E]">
-                Verification code
-              </label>
-              <input
-                id="code"
-                type="text"
-                inputMode="numeric"
-                maxLength={6}
-                required
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                className="w-full bg-[#FAF7F2] border border-[#E7E0D8] rounded-[5px] px-3 py-2 text-[14px] text-[#1A1A1A] tracking-[0.3em] text-center outline-none focus:border-[#1A6B3C]"
-                placeholder="000000"
-              />
-            </div>
-            {error && <p className="text-[12px] text-red-600">{error}</p>}
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-[#1A6B3C] text-white text-[13px] rounded-[5px] px-4 py-2.5 hover:bg-[#155032] transition-colors disabled:opacity-50"
-            >
-              {loading ? "Verifying..." : "Create account"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setStep("details")}
-              className="w-full text-[12px] text-[#57534E] underline"
-            >
-              Edit details
-            </button>
-          </form>
-        )}
+      {step === "code" && contact && (
+        <form onSubmit={handleVerify} className="space-y-4">
+          <p className="text-[13px] text-[#57534E]">We sent a 6-digit code to {contactLabel(contact)}.</p>
+          <CodeField value={code} onChange={setCode} />
+          <ErrorText error={error} />
+          <PrimaryButton loading={loading} loadingText="Verifying...">Create account</PrimaryButton>
+          <TextButton onClick={() => { setStep("details"); setError(null) }}>Edit details</TextButton>
+        </form>
+      )}
 
-        <p className="mt-6 text-center text-[12px] text-[#57534E]">
-          Already have an account?{" "}
-          <Link href="/login" className="text-[#1A6B3C] font-medium underline">
-            Log in
-          </Link>
-        </p>
+      <div className="mt-6">
+        <Notice>
+          Admins don&apos;t sign up here — admin accounts are created by a super admin.{" "}
+          <Link href="/login?as=admin" className="underline font-medium">Admin log in</Link>
+        </Notice>
       </div>
-    </div>
+    </AuthCard>
   )
 }

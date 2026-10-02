@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Generic, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.admin import AdminRole
 
@@ -47,6 +47,7 @@ class UserSummary(BaseModel):
 
     id: uuid.UUID
     mobile_number: str | None = None
+    email: str | None = None
     full_name: str | None = None
     is_verified: bool
     created_at: datetime
@@ -68,6 +69,12 @@ class AuditLogOut(BaseModel):
 
     model_config = {"from_attributes": True}
 
+    @field_validator("ip_address", mode="before")
+    @classmethod
+    def ip_to_str(cls, v):
+        # The INET column comes back as an ipaddress.IPv4Address/IPv6Address.
+        return str(v) if v is not None else None
+
 
 class AnalyticsOverview(BaseModel):
     users_total: int
@@ -88,3 +95,56 @@ class PaginatedList(BaseModel, Generic[T]):
     total: int
     page: int
     page_size: int
+
+# --- Account recovery / admin management ---
+
+class AdminForgotPasswordIn(BaseModel):
+    """Body of POST /admin/auth/forgot-password."""
+
+    email: str
+
+
+class AdminResetPasswordIn(BaseModel):
+    """Body of POST /admin/auth/reset-password."""
+
+    email: str
+    code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+    new_password: str
+
+
+class AdminChangePasswordIn(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class AdminCreateIn(BaseModel):
+    """Body of POST /admin/admins — super admins create admins; there is
+    no public admin signup."""
+
+    email: str
+    role: AdminRole
+    password: str
+
+
+class AdminUpdateIn(BaseModel):
+    role: AdminRole | None = None
+    is_active: bool | None = None
+
+
+class RecoveryRequestOut(BaseModel):
+    id: uuid.UUID
+    full_name: str | None = None
+    registered_contact: str
+    new_contact: str
+    details: str | None = None
+    matched_user_id: uuid.UUID | None = None
+    status: str
+    review_note: str | None = None
+    created_at: datetime
+    reviewed_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class RecoveryDecisionIn(BaseModel):
+    note: str | None = Field(default=None, max_length=1000)

@@ -53,6 +53,11 @@ class OTPRequest(Base):
     # "already used" state explicit and queryable).
     consumed: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # "login" codes sign a citizen in; "link_contact" codes only prove a
+    # logged-in citizen owns a backup email/mobile. Keeping them apart means
+    # a code sent for one purpose can never be redeemed for the other.
+    purpose: Mapped[str] = mapped_column(String(20), default="login", server_default="login")
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

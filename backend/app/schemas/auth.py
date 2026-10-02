@@ -112,3 +112,42 @@ class AccessTokenOut(BaseModel):
 
     access_token: str
     token_type: str = "bearer"
+
+
+class ContactOTPIn(BaseModel):
+    """Body of POST /users/me/contacts/request-otp — the backup email or
+    mobile a logged-in citizen wants to add for account recovery."""
+
+    mobile_number: str | None = None
+    email: EmailStr | None = None
+
+    @field_validator("mobile_number")
+    @classmethod
+    def validate_mobile(cls, v: str | None) -> str | None:
+        if v is not None and not re.fullmatch(r"[6-9]\d{9}", v):
+            raise ValueError("Enter a valid 10-digit Indian mobile number.")
+        return v
+
+    @model_validator(mode="after")
+    def exactly_one_identifier(self) -> "ContactOTPIn":
+        if bool(self.mobile_number) == bool(self.email):
+            raise ValueError("Provide exactly one of mobile_number or email.")
+        return self
+
+
+class ContactVerifyIn(ContactOTPIn):
+    code: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+
+class RecoveryRequestIn(BaseModel):
+    """Body of POST /auth/recovery-requests — a citizen who can't receive
+    codes on any contact registered to their account."""
+
+    full_name: str | None = Field(default=None, max_length=255)
+    registered_contact: str = Field(min_length=3, max_length=255)
+    new_contact: str = Field(min_length=3, max_length=255)
+    details: str | None = Field(default=None, max_length=2000)
+
+
+class MessageOut(BaseModel):
+    message: str

@@ -3,7 +3,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react"
 import { apiPost, setAccessToken, ApiError } from "./api-client"
 
-interface User {
+export interface User {
   id: string
   mobile_number: string | null
   email: string | null
@@ -25,6 +25,9 @@ interface AuthContextValue {
     full_name?: string
   }) => Promise<void>
   logout: () => void
+  // Replace the cached user after a change made elsewhere (e.g. adding a
+  // backup contact on /account).
+  updateUser: (user: User) => void
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -66,6 +69,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     []
   )
 
+  const updateUser = useCallback((next: User) => {
+    setUser(next)
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+  }, [])
+
   const logout = useCallback(() => {
     setAccessToken(null)
     setUser(null)
@@ -74,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, isLoading, requestOtp, verifyOtp, logout }}>
+    <AuthContext.Provider value={{ user, isAuthenticated: !!user, isLoading, requestOtp, verifyOtp, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   )

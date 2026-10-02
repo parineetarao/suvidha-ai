@@ -21,7 +21,7 @@ import app.db.base  # noqa: F401
 from app.core.exceptions import InsufficientRole, TokenExpired
 from app.core.security import decode_access_token
 from app.db.session import SessionLocal
-from app.models.admin import Admin
+from app.models.admin import Admin, AdminRole
 from app.models.user import User
 
 # HTTPBearer (not OAuth2PasswordBearer) because we're not doing the
@@ -114,4 +114,14 @@ def get_current_admin(
     if admin is None or not admin.is_active:
         raise InsufficientRole()
 
+    return admin
+
+
+def get_super_admin(admin: Annotated[Admin, Depends(get_current_admin)]) -> Admin:
+    """For actions that change who can access what: managing admins and
+    moving a citizen's account to a new contact. Checks the role stored on
+    the Admin row, not the JWT's roles claim, so a demotion takes effect
+    immediately rather than when the token expires."""
+    if admin.role != AdminRole.SUPER_ADMIN:
+        raise InsufficientRole("Only a super admin can do this.")
     return admin

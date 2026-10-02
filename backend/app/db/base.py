@@ -27,6 +27,7 @@ from app.models.otp import OTPRequest                 # noqa: E402, F401
 from app.models.admin import Admin                    # noqa: E402, F401
 from app.models.audit import AuditLog                 # noqa: E402, F401
 from app.models.refresh_token import RefreshToken     # noqa: E402, F401
+from app.models.account_recovery import AccountRecoveryRequest, AdminPasswordReset  # noqa: E402, F401
 
 # --- Member 2 (Scheme Discovery) ---
 from app.models.scheme import Scheme                   # noqa: E402, F401

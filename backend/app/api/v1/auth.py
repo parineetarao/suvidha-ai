@@ -8,7 +8,7 @@ No business logic lives here — see services/auth_service.py for that.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Depends, Response, status
+from fastapi import APIRouter, Cookie, Depends, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
@@ -17,13 +17,15 @@ from app.core.exceptions import InvalidCredentials
 from app.models.user import User
 from app.schemas.auth import (
     AccessTokenOut,
+    MessageOut,
     OTPRequestIn,
     OTPRequestOut,
     OTPVerifyIn,
+    RecoveryRequestIn,
     TokenPair,
 )
 from app.schemas.user import UserOut
-from app.services import auth_service
+from app.services import admin_account_service, auth_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -63,6 +65,26 @@ async def verify_otp(payload: OTPVerifyIn, response: Response, db: Annotated[Ses
     )
     _set_refresh_cookie(response, raw_refresh_token)
     return TokenPair(access_token=access_token, user=UserOut.model_validate(user))
+
+
+@router.post("/recovery-requests", response_model=MessageOut, status_code=status.HTTP_202_ACCEPTED)
+async def create_recovery_request(
+    payload: RecoveryRequestIn, request: Request, db: Annotated[Session, Depends(get_db)]
+):
+    """For a citizen who can't receive a code on any contact registered to
+    their account. Same reply whether or not an account matches."""
+    await admin_account_service.submit_recovery_request(
+        db,
+        payload.full_name,
+        payload.registered_contact,
+        payload.new_contact,
+        payload.details,
+        request.client.host if request.client else None,
+    )
+    return MessageOut(
+        message="Request received. An administrator will verify your identity and contact you on the new "
+        "email/mobile you gave. Once approved, log in with that new contact."
+    )
 
 
 @router.post("/refresh", response_model=AccessTokenOut)

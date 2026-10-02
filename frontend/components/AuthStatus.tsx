@@ -19,9 +19,9 @@ export default function AuthStatus() {
 
   return (
     <div className="flex items-center gap-2">
-      <span className="text-[12px] text-[#57534E]">
+      <Link href="/account" className="text-[12px] text-[#57534E] hover:text-[#1A6B3C] underline-offset-2 hover:underline">
         {user?.full_name || user?.email || user?.mobile_number}
-      </span>
+      </Link>
       <button
         onClick={logout}
         className="text-[12px] text-[#1A6B3C] underline"
