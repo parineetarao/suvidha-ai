@@ -140,7 +140,7 @@ export async function searchSchemes(
   language: ApiLanguage,
   limit = 10
 ): Promise<SchemeMatch[]> {
-  const res = await apiFetch(`${API_BASE_URL}/schemes/search`, {
+  const res = await apiFetch(`${API_BASE_URL}/schemes/smart-search`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, language, limit }),

@@ -221,3 +221,107 @@ def compare_schemes(body: SchemeCompareIn, db: Session = Depends(get_db)):
         missing = set(body.scheme_ids) - found
         raise HTTPException(status_code=404, detail=f"Scheme(s) not found: {', '.join(missing)}")
     return SchemeComparison(schemes=[_to_scheme_detail(s, body.language) for s in schemes])
+
+@router.post("/smart-search", response_model=list[SchemeMatch])
+def smart_search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
+    """
+    LLM-powered search that understands natural language queries properly.
+    Replaces pure semantic search for the main user-facing flow.
+
+    Flow:
+    1. LLM extracts structured profile from query text
+    2. Retrieve top 25 candidates by semantic similarity
+    3. Apply hard structural filters from extracted profile
+    4. LLM reranks/filters remaining candidates
+    5. Return top 5 with reasons in user's language
+    """
+    from app.services.query_understanding import extract_profile_from_query
+    from app.services.llm_reranker import rerank_schemes
+    from sqlalchemy import select
+
+    # Step 1 — extract profile from natural language
+    profile = extract_profile_from_query(body.query)
+    lang = profile.get("raw_language", body.language)
+
+    # Step 2 — retrieve 25 candidates by semantic similarity
+    # Using more candidates than usual (25 vs 10) because LLM will filter
+    raw_results = hybrid_search(db, query=body.query, language=body.language, limit=25)
+
+    # Step 3 — hard pre-filter before sending to LLM
+    # This reduces the LLM's work and catches obvious mismatches cheaply
+    filtered = []
+    for r in raw_results:
+        scheme = r["scheme"]
+        rules = scheme.eligibility_rules or {}
+
+        # Age filter — hard reject if user's age is outside the scheme's range
+        if profile.get("age"):
+            age = profile["age"]
+            if rules.get("min_age") and age < rules["min_age"]:
+                continue
+            if rules.get("max_age") and age > rules["max_age"]:
+                continue
+
+        # State filter — hard reject if scheme is state-specific and user is in wrong state
+        if profile.get("state") and rules.get("states"):
+            if profile["state"] not in rules["states"]:
+                continue
+
+        filtered.append(r)
+
+    if not filtered:
+        filtered = raw_results[:15]  # fallback: don't return empty
+
+    # Step 4 — prepare candidate dicts for LLM
+    candidates = []
+    for r in filtered[:20]:  # cap at 20 for LLM context
+        s = r["scheme"]
+        candidates.append({
+            "scheme_code": s.scheme_code,
+            "name": s.name,
+            "description": s.description,
+            "eligibility_text": s.eligibility_text,
+            "eligibility_rules": s.eligibility_rules or {},
+            "benefits": s.benefits,
+            "warning": s.warning,
+        })
+
+    # Step 5 — LLM reranks and filters
+    reranked = rerank_schemes(profile, candidates, response_language=lang)
+
+    if not reranked:
+        # Fallback: return raw semantic results with no LLM filtering
+        # Better to show something than nothing
+        return [_to_scheme_match(r, body.language) for r in filtered[:5]]
+        # Dynamic result count: all above 70% up to 10, minimum 5
+    high_confidence = [r for r in reranked if r.get("match_score", 0) >= 70]
+    if len(high_confidence) >= 5:
+        final = high_confidence[:10]
+    elif len(reranked) >= 5:
+        final = reranked[:5]
+    else:
+        final = reranked
+
+    matched_codes = [r["scheme_code"] for r in final]
+    scheme_map = {s.scheme_code: s for s in
+                  db.scalars(select(Scheme).where(Scheme.scheme_code.in_(matched_codes))).all()}
+
+    results = []
+    for item in final:
+        code = item["scheme_code"]
+        if code not in scheme_map:
+            continue
+        scheme = scheme_map[code]
+        results.append(SchemeMatch(
+            scheme_id=code,
+            name=scheme.localized("name", body.language),
+            match_score=item.get("match_score", 50),
+            reasons=[MatchReasonOut(
+                factor="llm_eligibility",
+                matched=item.get("reason", "Eligible based on provided information"),
+                weight=item.get("match_score", 50)
+            )],
+            warnings=[scheme.warning] if scheme.warning else [],
+        ))
+
+    return results
