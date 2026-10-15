@@ -2,120 +2,119 @@
 app/services/query_understanding.py
 
 Extracts a structured user profile from a natural-language query using
-Groq's LLM. This is the key piece that fixes the "professor gets student
-schemes" problem — by understanding what the user actually IS before
-searching, rather than doing pure semantic similarity on their words.
+the shared LLM client.
 
-Supports all 10 languages via the same model — no separate translation
-needed, the LLM handles multilingual understanding internally.
+This helps prevent mismatched recommendations, such as giving student
+schemes to a professor, by understanding the user's actual circumstances
+before searching.
+
+Supports multilingual queries through the configured LLM providers.
 """
 
-import json
 import logging
-import os
-import time
 
 from dotenv import load_dotenv
+
+from app.services.llm_client import LLMError, chat_json, parse_json
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-GROQ_MODEL = "openai/gpt-oss-120b"
-GROQ_RATE_LIMIT_SECONDS = 2.0
-
 
 def extract_profile_from_query(query: str) -> dict:
     """
-    Takes a free-text user query in any language and returns a structured
-    profile dict. Always returns a dict (empty fields as None), never raises.
+    Takes a free-text user query in any supported language and returns
+    a structured profile dictionary.
+
+    Always returns a dictionary, using None for unknown fields and
+    an empty list for categories when extraction fails.
 
     Example:
         "I am a 46 year old professor in Maharashtra"
-        ->
-        {
-            "age": 46,
-            "occupation": "professor",
-            "state": "Maharashtra",
-            "gender": null,
-            "income_max": null,
-            "categories": [],
-            "disability": null,
-            "is_student": false,
-            "is_farmer": false,
-            "is_widow": false,
-            "family_size": null,
-            "has_land": null,
-            "is_bpl": null
-        }
+
+    Returns a profile containing:
+        age: 46
+        occupation: "professor"
+        state: "Maharashtra"
+        is_student: False
     """
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        logger.warning("GROQ_API_KEY not set — skipping profile extraction, returning empty profile")
-        return _empty_profile()
 
-    try:
-        from groq import Groq
-    except ImportError:
-        logger.warning("groq not installed — returning empty profile")
-        return _empty_profile()
+    prompt = f"""You are a profile extraction assistant for an Indian
+government scheme recommendation system.
 
-    prompt = f"""You are a profile extraction assistant for an Indian government scheme recommendation system.
-
-The user has described their situation in natural language (possibly Hindi, Marathi, Tamil, Telugu, Kannada, Malayalam, Bengali, Gujarati, Punjabi, or English). Extract a structured profile.
+The user has described their situation in natural language, possibly
+Hindi, Marathi, Tamil, Telugu, Kannada, Malayalam, Bengali, Gujarati,
+Punjabi, or English. Extract a structured profile.
 
 CRITICAL RULES:
-- is_student: true ONLY if the person explicitly says they are currently studying. A professor, teacher, or any professional is NOT a student even if they work in education.
-- occupation: the person's job/profession, not their subject of interest. "professor" -> "professor", never "student"
-- If a field is not mentioned, set it to null (or [] for lists)
-- Do not infer or guess fields not explicitly mentioned
-- For Indian states, normalize to the full English name (e.g. "Maharashtra", "Tamil Nadu")
-- Output valid JSON only, no other text
+- is_student: true ONLY if the person explicitly says they are
+  currently studying. A professor, teacher, or other professional
+  is NOT a student merely because they work in education.
+- occupation: the person's actual job or profession, not their
+  subject of interest. "Professor" -> "professor", never "student".
+- If a field is not mentioned, use null, or [] for lists.
+- Do not infer or guess fields that are not explicitly mentioned.
+- For Indian states, use the full English name, e.g. "Maharashtra"
+  or "Tamil Nadu".
+- is_student should be false when a professional occupation is
+  explicitly stated and there is no indication that the person is
+  also currently studying. Use null if the situation is unclear.
+- Detect the language of the user's query and return its language
+  code in raw_language.
+- Output valid JSON only, with no additional text.
 
-User query: "{query}"
+User query:
+{query}
 
-Output this exact JSON structure:
+Output this JSON structure:
 {{
   "age": <number or null>,
-  "occupation": <string or null — their job/profession>,
-  "state": <string or null — Indian state they mentioned>,
-  "gender": <"male"/"female"/"other" or null>,
+  "occupation": <string or null — their job/profession, ALWAYS written in English>,
+  "occupation_group": <one of "farmer","agricultural_laborer","student","teacher_faculty","engineer_scientist","health_worker","construction_worker","unorganised_worker","artisan_craftsperson","fisherman","ex_serviceman","government_employee","entrepreneur","self_employed","unemployed","homemaker","artist_performer","other", or null if not stated>,
+  "state": <string or null>,
+  "gender": <"male", "female", "other", or null>,
   "income_annual_inr": <number or null>,
-  "categories": <list of "SC"/"ST"/"OBC"/"General"/"BPL"/"PVTG" — only if explicitly mentioned>,
+  "categories": <list of "SC", "ST", "OBC", "General", "BPL", "PVTG">,
   "disability_percentage": <number or null>,
-  "is_student": <true/false/null — null if unclear, false if they have a professional occupation>,
-  "is_farmer": <true/false/null>,
-  "is_widow": <true/false/null>,
-  "is_bpl": <true/false/null>,
-  "has_land": <true/false/null>,
+  "is_student": <true, false, or null>,
+  "is_farmer": <true, false, or null>,
+  "is_widow": <true, false, or null>,
+  "is_bpl": <true, false, or null>,
+  "has_land": <true, false, or null>,
   "family_size": <number or null>,
-  "raw_language": <detected language code, e.g. "en", "hi", "mr">
+  "raw_language": <language code, e.g. "en", "hi", or "mr">
 }}"""
 
     try:
-        client = Groq(api_key=api_key)
-        response = client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-            response_format={"type": "json_object"},
+        parsed = parse_json(chat_json(prompt))
+        profile = {**_empty_profile(), **parsed}
+        logger.info("Extracted profile: %s", profile)
+        return profile
+
+    except (LLMError, ValueError):
+        logger.exception(
+            "Profile extraction failed - returning empty profile"
         )
-        raw = response.choices[0].message.content
-        parsed = json.loads(raw)
-        logger.info("Extracted profile: %s", parsed)
-        return parsed
-    except Exception:
-        logger.exception("Profile extraction failed — returning empty profile")
         return _empty_profile()
-    finally:
-        time.sleep(GROQ_RATE_LIMIT_SECONDS)
 
 
 def _empty_profile() -> dict:
+    """Return a profile with all fields initialized to safe defaults."""
     return {
-        "age": None, "occupation": None, "state": None, "gender": None,
-        "income_annual_inr": None, "categories": [], "disability_percentage": None,
-        "is_student": None, "is_farmer": None, "is_widow": None,
-        "is_bpl": None, "has_land": None, "family_size": None,
-        "raw_language": "en"
+        "age": None,
+        "occupation": None,
+        "occupation_group": None,
+        "state": None,
+        "gender": None,
+        "income_annual_inr": None,
+        "categories": [],
+        "disability_percentage": None,
+        "is_student": None,
+        "is_farmer": None,
+        "is_widow": None,
+        "is_bpl": None,
+        "has_land": None,
+        "family_size": None,
+        "raw_language": "en",
     }

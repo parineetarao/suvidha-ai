@@ -1,163 +1,177 @@
 """
-app/services/llm_reranker.py
-
-Takes a user profile + a list of candidate schemes and uses an LLM to:
-1. REJECT schemes the user clearly doesn't qualify for
-2. Flag INSUFFICIENT_INFORMATION when eligibility can't be determined
-3. MATCH schemes the user likely qualifies for
-4. Generate a reason in the user's own language
-
-This is what prevents "professor gets student schemes" from reaching the
-final response — even if semantic search retrieves a student scheme as
-a candidate, the LLM reads its eligibility text and rejects it because
-the user is a professor, not a student.
-
-The LLM NEVER invents scheme details — it only reads what's in the DB.
+Eligibility classifier. Language-independent statuses:
+  likely_match      - known profile supports eligibility, nothing mandatory unknown
+  check_eligibility - scheme fits the user's target group, a mandatory detail is unknown
+  not_eligible      - a stated user fact conflicts with a mandatory requirement
+  not_applicable    - institutional scheme, or unrelated to this kind of applicant
 """
-
 import json
 import logging
 import os
-import time
 
 from dotenv import load_dotenv
 
-load_dotenv()
+from app.services.llm_client import LLMError, chat_json, parse_json
 
+load_dotenv()
 logger = logging.getLogger(__name__)
 
-GROQ_MODEL = "openai/gpt-oss-120b"
-GROQ_RATE_LIMIT_SECONDS = 2.0
-MAX_CANDIDATES_PER_CALL = 15  # balance between context size and coverage
+MAX_CANDIDATES_PER_CALL = int(os.environ.get("LLM_MAX_CANDIDATES", "12"))
+ELIGIBILITY_CHARS = int(os.environ.get("LLM_ELIGIBILITY_CHARS", "450"))
+MIN_BATCH = 4
+
+LANG_NAMES = {
+    "en": "English", "hi": "Hindi", "mr": "Marathi", "ta": "Tamil", "te": "Telugu",
+    "kn": "Kannada", "ml": "Malayalam", "bn": "Bengali", "gu": "Gujarati", "pa": "Punjabi",
+}
+STATUSES = ("likely_match", "check_eligibility", "not_eligible", "not_applicable")
+_LEGACY = {"match": "likely_match", "insufficient_information": "check_eligibility", "reject": "not_eligible"}
+_CACHE: dict = {}
+
+RULES = """You help a citizen discover Indian government schemes. For each scheme decide how it relates to this user, using ONLY the scheme text given.
+Read the eligibility text, list the personal requirements it states, and check ONLY those against the profile. Profile facts the scheme does not mention are irrelevant: ignore them.
+Statuses:
+- likely_match: the scheme is meant for people like this user and every stated requirement is satisfied by the profile. Nothing mandatory is unknown.
+- check_eligibility: the scheme is meant for people like this user (its target group fits the request and the known profile) but at least one mandatory requirement cannot be verified because the profile does not say (state of residence, caste/category, income, marks, disability, BPL, course, school type...). List each in missing_information.
+- not_eligible: a fact the user clearly stated conflicts with a mandatory requirement (age outside range, other state, wrong gender, student-only while user is not a student, a named occupation, etc.).
+- not_applicable: for institutions, organisations or departments; individuals do not apply directly; or its target group is unrelated to this user's request.
+Missing information alone must NEVER make a scheme not_eligible. An unverified mandatory requirement must NEVER make a scheme likely_match. Never assume facts the user did not give. Empty auto-extracted Rules do NOT mean there are no requirements: read the Eligibility text.
+If the request states no need and the profile is empty or meaningless (for example a greeting), return not_applicable for every scheme."""
 
 
-def rerank_schemes(user_profile: dict, candidates: list[dict], response_language: str = "en") -> list[dict]:
-    """
-    Takes extracted user profile + list of candidate scheme dicts,
-    returns only the matched ones with reasons.
+def _empty(ok=False):
+    return {"likely": [], "check": [], "excluded": [], "evaluated": [], "ok": ok}
 
-    Each candidate dict should have: scheme_code, name, description,
-    eligibility_text, eligibility_rules, benefits, warning.
 
-    Returns list of:
-    {
-        "scheme_code": str,
-        "name": str,
-        "decision": "match" | "insufficient_information",
-        "reason": str,  # in user's language
-        "missing_information": list[str],
-        "match_score": int  # 0-100
+def normalize_result(r):
+    """Maps one raw LLM entry to a validated dict, or None if its status is unusable."""
+    status = str(r.get("status") or r.get("decision") or "").strip().lower()
+    status = _LEGACY.get(status, status)
+    if status not in STATUSES:
+        return None
+    missing = r.get("missing_information") or []
+    if isinstance(missing, str):
+        missing = [missing]
+    missing = [m.strip() for m in missing if isinstance(m, str) and m.strip()]
+    if status == "likely_match" and missing:
+        status = "check_eligibility"   # guard: an unverified requirement can't be a likely match
+    try:
+        score = int(float(r.get("match_score")))
+    except (TypeError, ValueError):
+        score = None
+    if status == "likely_match":
+        score = min(100, max(70, score if score is not None else 80))
+    elif status == "check_eligibility":
+        score = min(65, max(40, score if score is not None else 50))
+    else:
+        score = 0
+    return {
+        "scheme_code": r.get("scheme_code"),
+        "status": status,
+        "reason": str(r.get("reason") or "").strip(),
+        "missing_information": missing,
+        "match_score": score,
     }
-    """
+
+
+def select_final(likely, check, max_return):
+    """Verified matches first, then 'check eligibility'. Never padded with anything else."""
+    likely = sorted(likely, key=lambda r: -r["match_score"])
+    check = sorted(check, key=lambda r: -r["match_score"])
+    return (likely + check)[:max_return]
+
+
+def _build_prompt(profile, batch, lang, query):
+    blocks = []
+    for s in batch:
+        rules = s.get("eligibility_rules") or {}
+        shown = {k: v for k, v in rules.items()
+                 if k not in ("needs_review", "_field_sources") and v not in (None, [], {}, "")}
+        text = (s.get("eligibility_text") or "").strip()[:ELIGIBILITY_CHARS] or "(none given)"
+        block = f"[{s['scheme_code']}] {(s.get('name') or '')[:90]}\nEligibility: {text}"
+        if shown:
+            block += f"\nRules (auto-extracted hints): {json.dumps(shown, ensure_ascii=False)}"
+        blocks.append(block)
+    request_line = f'USER REQUEST (their own words): "{query[:300]}"\n' if query else ""
+    return f"""{RULES}
+
+{request_line}USER PROFILE:
+{_summarize_profile(profile)}
+
+SCHEMES:
+{chr(10).join(blocks)}
+
+Write each reason (one short sentence) in {LANG_NAMES.get(lang, 'English')}. Write missing_information items as short English snake_case labels (e.g. state_of_residence, caste_category, annual_income).
+Return JSON only, one entry per scheme, scheme_code copied exactly:
+{{"results":[{{"scheme_code":"...","status":"likely_match|check_eligibility|not_eligible|not_applicable","reason":"...","missing_information":[],"match_score":0}}]}}
+match_score: 70-100 likely_match, 40-65 check_eligibility, 0 otherwise."""
+
+
+def rerank_schemes(user_profile, candidates, response_language="en", query=""):
+    """One LLM call for up to MAX_CANDIDATES_PER_CALL candidates.
+    Returns {"likely","check","excluded","evaluated","ok"}. ok=False means the call itself failed."""
     if not candidates:
-        return []
+        return _empty(ok=True)
 
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        logger.warning("GROQ_API_KEY not set — skipping LLM reranking")
-        return []
+    batch = candidates[:MAX_CANDIDATES_PER_CALL]
+    cache_key = (json.dumps(user_profile, sort_keys=True, default=str), query,
+                 tuple(c["scheme_code"] for c in batch), response_language)
+    if cache_key in _CACHE:
+        logger.info("Rerank cache hit")
+        return _CACHE[cache_key]
 
-    try:
-        from groq import Groq
-    except ImportError:
-        logger.warning("groq not installed — skipping LLM reranking")
-        return []
+    parsed = None
+    for _ in range(3):
+        logger.info("Classifying %d candidates: %s", len(batch), [c["scheme_code"] for c in batch])
+        try:
+            parsed = parse_json(chat_json(_build_prompt(user_profile, batch, response_language, query)))
+            break
+        except LLMError as exc:
+            if 413 in exc.statuses and len(batch) > MIN_BATCH:
+                batch = batch[: max(MIN_BATCH, len(batch) // 2)]
+                logger.warning("payload too large; retrying with %d candidates", len(batch))
+                continue
+            logger.error("LLM classification failed: %s", exc)
+            return _empty()
+        except ValueError:
+            logger.exception("Unparseable LLM reply")
+            return _empty()
+    if parsed is None:
+        return _empty()
 
-    language_instructions = {
-        "hi": "Respond in Hindi. The 'reason' field must be in Hindi.",
-        "mr": "Respond in Marathi. The 'reason' field must be in Marathi.",
-        "ta": "Respond in Tamil. The 'reason' field must be in Tamil.",
-        "te": "Respond in Telugu. The 'reason' field must be in Telugu.",
-        "kn": "Respond in Kannada. The 'reason' field must be in Kannada.",
-        "ml": "Respond in Malayalam. The 'reason' field must be in Malayalam.",
-        "bn": "Respond in Bengali. The 'reason' field must be in Bengali.",
-        "gu": "Respond in Gujarati. The 'reason' field must be in Gujarati.",
-        "pa": "Respond in Punjabi. The 'reason' field must be in Punjabi.",
-    }.get(response_language, "Respond in English. The 'reason' field must be in English.")
+    raw = parsed.get("results", [])
+    if not isinstance(raw, list):
+        raw = []
+    supplied = {c["scheme_code"] for c in batch}
+    seen, likely, check, excluded = set(), [], [], []
+    for r in raw:
+        if not isinstance(r, dict):
+            continue
+        code = r.get("scheme_code")
+        if code not in supplied or code in seen:
+            continue          # ignore invented or duplicate codes
+        item = normalize_result(r)
+        if item is None:
+            continue
+        seen.add(code)
+        logger.info("  %s -> %s | %s | missing=%s", code, item["status"], item["reason"][:120],
+                    item["missing_information"])
+        if item["status"] == "likely_match":
+            likely.append(item)
+        elif item["status"] == "check_eligibility":
+            check.append(item)
+        else:
+            excluded.append(item)
 
-    # Format candidates compactly to stay within context limits
-    schemes_text = ""
-    for i, s in enumerate(candidates[:MAX_CANDIDATES_PER_CALL], 1):
-        rules = s.get("eligibility_rules", {})
-        # Remove internal fields before sending to LLM
-        display_rules = {k: v for k, v in rules.items()
-                        if k not in ("needs_review", "_field_sources") and v not in (None, [], {})}
-        schemes_text += f"""
-SCHEME {i}: {s.get('scheme_code')}
-Name: {s.get('name')}
-Description: {s.get('description', '')[:300]}
-Eligibility: {s.get('eligibility_text', '')[:400]}
-Structured rules: {json.dumps(display_rules)}
-Benefits: {s.get('benefits', '')[:200]}
----"""
-
-    user_summary = _summarize_profile(user_profile)
-
-    prompt = f"""You are an Indian government scheme eligibility advisor.
-
-USER PROFILE:
-{user_summary}
-
-CANDIDATE SCHEMES TO EVALUATE:
-{schemes_text}
-
-{language_instructions}
-
-For each scheme, evaluate whether this specific user is eligible based ONLY on the information provided.
-Do NOT invent eligibility conditions. Do NOT assume information not provided by the user.
-
-IMPORTANT RULES:
-- If a scheme is clearly for students but the user is a working professional: REJECT it
-- If a scheme is restricted to a specific caste/category not mentioned by the user: mark INSUFFICIENT_INFORMATION
-- If the scheme has no eligibility conditions that the user fails: MATCH it
-- A scheme open to "all citizens" or with no restrictions: MATCH it if the user meets any age/state conditions
-- Be CONSERVATIVE: it is better to ask for missing info than to wrongly reject or wrongly match
-
-Output a JSON array with one object per scheme:
-[
-  {{
-    "scheme_code": "<code>",
-    "name": "<name>",
-    "decision": "match" | "reject" | "insufficient_information",
-    "reason": "<explanation in the specified language, 1-2 sentences>",
-    "missing_information": ["<field1>", "<field2>"],
-    "match_score": <0-100, confidence this user qualifies>
-  }},
-  ...
-]
-
-Only include schemes with decision "match" or "insufficient_information" in the output.
-Reject clearly ineligible schemes silently (omit them from output).
-"""
-
-    try:
-        client = Groq(api_key=api_key)
-        response = client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-            response_format={"type": "json_object"},
-        )
-        raw = response.choices[0].message.content
-        # Groq with json_object mode wraps arrays in an object sometimes
-        parsed = json.loads(raw)
-        if isinstance(parsed, dict):
-            # unwrap if needed
-            for key in ("results", "schemes", "matches"):
-                if key in parsed and isinstance(parsed[key], list):
-                    parsed = parsed[key]
-                    break
-            else:
-                parsed = list(parsed.values())[0] if parsed else []
-        return sorted(parsed, key=lambda x: x.get("match_score", 0), reverse=True)
-    except Exception:
-        logger.exception("LLM reranking failed — returning empty list")
-        return []
-    finally:
-        time.sleep(GROQ_RATE_LIMIT_SECONDS)
+    out = {"likely": likely, "check": check, "excluded": excluded,
+           "evaluated": [c["scheme_code"] for c in batch], "ok": True}
+    logger.info("Classification complete - likely: %d, check: %d, excluded: %d",
+                len(likely), len(check), len(excluded))
+    _CACHE[cache_key] = out
+    return out
 
 
-def _summarize_profile(profile: dict) -> str:
+def _summarize_profile(profile):
     parts = []
     if profile.get("age"):
         parts.append(f"Age: {profile['age']}")
@@ -168,19 +182,15 @@ def _summarize_profile(profile: dict) -> str:
     if profile.get("gender"):
         parts.append(f"Gender: {profile['gender']}")
     if profile.get("income_annual_inr"):
-        parts.append(f"Annual income: ₹{profile['income_annual_inr']:,}")
+        parts.append(f"Annual income: Rs {profile['income_annual_inr']:,}")
     if profile.get("categories"):
         parts.append(f"Category: {', '.join(profile['categories'])}")
-    if profile.get("is_student") is True:
-        parts.append("Status: Currently a student")
-    elif profile.get("is_student") is False:
-        parts.append("Status: Not a student (working professional)")
-    if profile.get("is_farmer") is True:
-        parts.append("Status: Farmer")
-    if profile.get("is_widow") is True:
-        parts.append("Status: Widow")
-    if profile.get("is_bpl") is True:
-        parts.append("Status: BPL (Below Poverty Line)")
+    for key, label in (("is_student", "Student"), ("is_farmer", "Farmer"),
+                       ("is_widow", "Widow"), ("is_bpl", "BPL household")):
+        if profile.get(key) is True:
+            parts.append(f"{label}: YES")
+        elif profile.get(key) is False:
+            parts.append(f"{label}: NO")
     if profile.get("disability_percentage"):
         parts.append(f"Disability: {profile['disability_percentage']}%")
-    return "\n".join(parts) if parts else "No profile information provided"
+    return "\n".join(parts) if parts else "No profile information provided."

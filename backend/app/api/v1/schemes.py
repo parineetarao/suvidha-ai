@@ -1,25 +1,20 @@
 """
 app/api/v1/schemes.py
 
-The FastAPI HTTP layer for scheme discovery. Every function here is thin on
-purpose: parse the request, call a plain Python function from services/,
-shape the result into a Pydantic response model, return it. All the actual
-logic (search ranking, eligibility filtering, scoring) already lives in
-search_service.py and matching_service.py — this file does not reimplement
-any of it.
+The FastAPI HTTP layer for scheme discovery. Every function here is thin
+on purpose: parse the request, call a service, shape the result into a
+Pydantic response model, and return it.
 
-SYNC NOTE: matches Member 3's actual synchronous SQLAlchemy session
-(app.db.session.get_db, which yields a plain Session). Endpoint functions
-are plain `def`, not `async def` — FastAPI runs sync endpoints in a
-threadpool automatically, so this is a calling-convention choice, not a
-performance downgrade.
+SYNC NOTE:
+Uses a synchronous SQLAlchemy Session from app.db.session.get_db.
+Regular def endpoints are run in FastAPI's threadpool automatically.
 
-REMAINING GAP: `get_current_user_profile` is a stub that always returns
-HTTP 501. POST /schemes/match cannot work correctly until Member 1's real
-auth dependency exists to supply a real logged-in user's profile — this
-makes that gap loud and explicit instead of faking a working response.
-Owned by: Member 2 — Scheme Discovery Engine.
+REMAINING GAP:
+get_current_user_profile is a stub returning HTTP 501 until the real
+authentication dependency is wired up.
 """
+
+import logging
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -28,7 +23,6 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.scheme import Scheme
-from app.services.embedding_service import embedding_service
 from app.schemas.scheme import (
     MatchReason as MatchReasonOut,
     PaginatedSchemes,
@@ -43,9 +37,16 @@ from app.schemas.scheme import (
     VoiceSchemeSearchIn,
     VoiceSchemeSearchOut,
 )
-from app.services.matching_service import UserProfile, get_matches, match_schemes as strict_match
+from app.services.embedding_service import embedding_service
+from app.services.matching_service import (
+    UserProfile,
+    get_matches,
+    match_schemes as strict_match,
+)
 from app.services.search_service import hybrid_search
 from app.services.voice_profile_service import parse_profile
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/schemes", tags=["schemes"])
 
@@ -53,8 +54,10 @@ router = APIRouter(prefix="/schemes", tags=["schemes"])
 def get_current_user_profile() -> UserProfile:
     raise HTTPException(
         status_code=501,
-        detail="Auth not wired up yet — POST /schemes/match needs Member 1's "
-        "auth dependency to supply a real user profile.",
+        detail=(
+            "Auth not wired up yet — POST /schemes/match needs Member 1's "
+            "auth dependency to supply a real user profile."
+        ),
     )
 
 
@@ -92,18 +95,32 @@ def _to_scheme_detail(scheme: Scheme, lang: str) -> SchemeDetail:
 
 
 def _to_scheme_match(result, lang: str) -> SchemeMatch:
-    """Accepts either a matching_service.MatchResult or a search_service
-    result dict — both carry a `scheme` plus score info, just shaped
-    slightly differently, since the two services were built independently
-    for different endpoints (see search_service.py's scope note)."""
+    """
+    Accept either a matching_service.MatchResult or a search_service
+    result dictionary. Both carry a scheme and score information.
+    """
     scheme = result["scheme"] if isinstance(result, dict) else result.scheme
+
     if isinstance(result, dict):
         score = round(result["score"] * 100)
-        reasons = [MatchReasonOut(factor="semantic_query", matched="relevant to your query", weight=round(result["semantic"] * 100))]
+        reasons = [
+            MatchReasonOut(
+                factor="semantic_query",
+                matched="relevant to your query",
+                weight=round(result["semantic"] * 100),
+            )
+        ]
         warnings = [scheme.warning] if scheme.warning else []
     else:
         score = result.match_score
-        reasons = [MatchReasonOut(factor=r.factor, matched=r.matched, weight=r.weight) for r in result.reasons]
+        reasons = [
+            MatchReasonOut(
+                factor=reason.factor,
+                matched=reason.matched,
+                weight=reason.weight,
+            )
+            for reason in result.reasons
+        ]
         warnings = result.warnings
 
     return SchemeMatch(
@@ -125,12 +142,14 @@ def list_schemes(
     db: Session = Depends(get_db),
 ):
     stmt = select(Scheme).where(Scheme.is_published == is_published)
+
     if category:
         stmt = stmt.where(Scheme.category == category)
+
     if state:
-        # states is a JSONB list on eligibility_rules; empty list = central,
-        # so also matches. TODO: implement via a JSONB containment query
-        # once there's a real database to test the exact operator against.
+        # State filtering is not implemented here yet.
+        # States are stored in eligibility_rules; central schemes
+        # should also be considered applicable across states.
         pass
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -140,40 +159,36 @@ def list_schemes(
     schemes = db.scalars(stmt).all()
 
     return PaginatedSchemes(
-        items=[_to_scheme_out(s, "en") for s in schemes],
+        items=[_to_scheme_out(scheme, "en") for scheme in schemes],
         total=total,
         page=page,
         limit=limit,
     )
 
 
-#@router.get("/{scheme_id}", response_model=SchemeDetail)
-#def get_scheme(scheme_id: str, lang: str = "en", db: Session = Depends(get_db)):
-    stmt = select(Scheme).where(Scheme.scheme_code == scheme_id)
-    scheme = db.scalar(stmt)
-    if scheme is None:
-        raise HTTPException(status_code=404, detail=f"Scheme '{scheme_id}' not found")
-    return _to_scheme_detail(scheme, lang)
-
-
 @router.post("/search", response_model=list[SchemeMatch])
 def search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
-    """Public — no auth, no personalization. Pure query relevance."""
-    results = hybrid_search(db, query=body.query, language=body.language, limit=body.limit)
-    return [_to_scheme_match(r, body.language) for r in results]
+    """Public search without personalized eligibility filtering."""
+    results = hybrid_search(
+        db,
+        query=body.query,
+        language=body.language,
+        limit=body.limit,
+    )
+    return [_to_scheme_match(result, body.language) for result in results]
 
 
 @router.post("/voice-search", response_model=VoiceSchemeSearchOut)
-def voice_search_schemes(body: VoiceSchemeSearchIn, db: Session = Depends(get_db)):
-    """Public — no auth. Takes the FULL sentence the user spoke or typed,
-    parses their eligibility profile out of it (gender, age, state,
-    occupation, caste/BPL, income, disability), and returns only the
-    published schemes whose every eligibility rule that profile satisfies,
-    ranked by how specifically each scheme targets them. `missing_fields`
-    says which unmentioned details would unlock more schemes. Exists
-    because /schemes/match needs auth that isn't wired up yet (see
-    get_current_user_profile above)."""
+def voice_search_schemes(
+    body: VoiceSchemeSearchIn,
+    db: Session = Depends(get_db),
+):
+    """
+    Public voice/text search. Parses the user's profile, then matches
+    published schemes against the parsed eligibility information.
+    """
     parsed = parse_profile(body.text, body.language)
+
     profile = UserProfile(
         gender=parsed["gender"],
         age=parsed["age"],
@@ -192,11 +207,19 @@ def voice_search_schemes(body: VoiceSchemeSearchIn, db: Session = Depends(get_db
     if embedding_service.is_ready:
         query_embedding = np.array(embedding_service.encode(body.text))
 
-    outcome = strict_match(all_schemes, profile, query_embedding, limit=body.limit)
+    outcome = strict_match(
+        all_schemes,
+        profile,
+        query_embedding,
+        limit=body.limit,
+    )
 
     return VoiceSchemeSearchOut(
         parsed_profile=ParsedVoiceProfile(**parsed),
-        results=[_to_scheme_match(r, body.language) for r in outcome.results],
+        results=[
+            _to_scheme_match(result, body.language)
+            for result in outcome.results
+        ],
         missing_fields=outcome.missing_fields,
     )
 
@@ -207,121 +230,126 @@ def match_schemes(
     db: Session = Depends(get_db),
     profile: UserProfile = Depends(get_current_user_profile),
 ):
-    """Authenticated — personalized, eligibility-filtered, with reasons."""
-    results = get_matches(db, profile=profile, query=body.query, language=body.language)
-    return [_to_scheme_match(r, body.language) for r in results]
+    """Authenticated, personalized matching with eligibility reasons."""
+    results = get_matches(
+        db,
+        profile=profile,
+        query=body.query,
+        language=body.language,
+    )
+    return [_to_scheme_match(result, body.language) for result in results]
 
 
 @router.post("/compare", response_model=SchemeComparison)
-def compare_schemes(body: SchemeCompareIn, db: Session = Depends(get_db)):
-    stmt = select(Scheme).where(Scheme.scheme_code.in_(body.scheme_ids))
+def compare_schemes(
+    body: SchemeCompareIn,
+    db: Session = Depends(get_db),
+):
+    stmt = select(Scheme).where(
+        Scheme.scheme_code.in_(body.scheme_ids)
+    )
     schemes = db.scalars(stmt).all()
+
     if len(schemes) != len(body.scheme_ids):
-        found = {s.scheme_code for s in schemes}
+        found = {scheme.scheme_code for scheme in schemes}
         missing = set(body.scheme_ids) - found
-        raise HTTPException(status_code=404, detail=f"Scheme(s) not found: {', '.join(missing)}")
-    return SchemeComparison(schemes=[_to_scheme_detail(s, body.language) for s in schemes])
+        raise HTTPException(
+            status_code=404,
+            detail=f"Scheme(s) not found: {', '.join(missing)}",
+        )
+
+    return SchemeComparison(
+        schemes=[
+            _to_scheme_detail(scheme, body.language)
+            for scheme in schemes
+        ]
+    )
 
 @router.post("/smart-search", response_model=list[SchemeMatch])
 def smart_search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
-    """
-    LLM-powered search that understands natural language queries properly.
-    Replaces pure semantic search for the main user-facing flow.
+    import logging
+    import os
 
-    Flow:
-    1. LLM extracts structured profile from query text
-    2. Retrieve top 25 candidates by semantic similarity
-    3. Apply hard structural filters from extracted profile
-    4. LLM reranks/filters remaining candidates
-    5. Return top 5 with reasons in user's language
-    """
+    from app.services.candidate_filter import scheme_state_scope
+    from app.services.lazy_translate import ensure_translated, translate_texts
+    from app.services.match_spec import (confidence, evaluate, explain_en, has_basis,
+                                         normalize_profile, status_of)
     from app.services.query_understanding import extract_profile_from_query
-    from app.services.llm_reranker import rerank_schemes
-    from sqlalchemy import select
 
-    # Step 1 — extract profile from natural language
+    log = logging.getLogger("smart_search")
+    top_n = int(os.environ.get("SMART_SEARCH_MAX", "10"))
+    floor = int(os.environ.get("SMART_SEARCH_MIN_CONFIDENCE", "40"))
+    pool = int(os.environ.get("SMART_SEARCH_POOL", "300"))
+
     profile = extract_profile_from_query(body.query)
-    lang = profile.get("raw_language", body.language)
+    prof = normalize_profile(profile)
+    raw = hybrid_search(db, query=body.query, language=body.language, limit=pool)
+    if not raw:
+        return []
 
-    # Step 2 — retrieve 25 candidates by semantic similarity
-    # Using more candidates than usual (25 vs 10) because LLM will filter
-    raw_results = hybrid_search(db, query=body.query, language=body.language, limit=25)
+    scores = [r.get("score") for r in raw if isinstance(r.get("score"), (int, float))]
+    top_score = max(scores) if scores else 0
 
-    # Step 3 — hard pre-filter before sending to LLM
-    # This reduces the LLM's work and catches obvious mismatches cheaply
-    filtered = []
-    for r in raw_results:
-        scheme = r["scheme"]
-        rules = scheme.eligibility_rules or {}
+    def relevance(r, rank):
+        sc = r.get("score")
+        if isinstance(sc, (int, float)) and top_score > 0:
+            return max(0.0, sc / top_score)
+        return (1 - rank / max(len(raw), 1)) ** 2
 
-        # Age filter — hard reject if user's age is outside the scheme's range
-        if profile.get("age"):
-            age = profile["age"]
-            if rules.get("min_age") and age < rules["min_age"]:
-                continue
-            if rules.get("max_age") and age > rules["max_age"]:
-                continue
-
-        # State filter — hard reject if scheme is state-specific and user is in wrong state
-        if profile.get("state") and rules.get("states"):
-            if profile["state"] not in rules["states"]:
-                continue
-
-        filtered.append(r)
-
-    if not filtered:
-        filtered = raw_results[:15]  # fallback: don't return empty
-
-    # Step 4 — prepare candidate dicts for LLM
-    candidates = []
-    for r in filtered[:20]:  # cap at 20 for LLM context
+    scored, seen, no_spec, no_basis, excluded = [], set(), 0, 0, 0
+    for rank, r in enumerate(raw):
         s = r["scheme"]
-        candidates.append({
-            "scheme_code": s.scheme_code,
-            "name": s.name,
-            "description": s.description,
-            "eligibility_text": s.eligibility_text,
-            "eligibility_rules": s.eligibility_rules or {},
-            "benefits": s.benefits,
-            "warning": s.warning,
-        })
+        if s.scheme_code in seen:
+            continue
+        seen.add(s.scheme_code)
+        spec = (s.eligibility_rules or {}).get("match_spec")
+        if not spec:
+            no_spec += 1
+            continue
+        if not has_basis(spec):
+            no_basis += 1      # nothing verifiable about who this is for: never recommend it
+            continue
+        ev = evaluate(spec, prof, scheme_state_scope(s))
+        if ev["excluded"]:
+            excluded += 1
+            continue
+        conf = confidence(ev, relevance(r, rank))
+        if conf >= floor:
+            scored.append((conf, rank, s, ev))
 
-    # Step 5 — LLM reranks and filters
-    reranked = rerank_schemes(profile, candidates, response_language=lang)
+    if seen and no_spec == len(seen):
+        raise HTTPException(status_code=503,
+                            detail="Scheme match data is not prepared yet (run scripts.extract_match_specs).")
 
-    if not reranked:
-        # Fallback: return raw semantic results with no LLM filtering
-        # Better to show something than nothing
-        return [_to_scheme_match(r, body.language) for r in filtered[:5]]
-        # Dynamic result count: all above 70% up to 10, minimum 5
-    high_confidence = [r for r in reranked if r.get("match_score", 0) >= 70]
-    if len(high_confidence) >= 5:
-        final = high_confidence[:10]
-    elif len(reranked) >= 5:
-        final = reranked[:5]
-    else:
-        final = reranked
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    final = scored[:top_n]
+    log.info("smart-search '%s': profile=%s | %d evaluated, %d excluded, %d no verifiable info, "
+             "%d no spec, %d above floor, %d returned",
+             body.query[:60], {k: v for k, v in profile.items() if v not in (None, [], "")},
+             len(seen), excluded, no_basis, no_spec, len(scored), len(final))
+    for conf, _, s, ev in final:
+        log.info("  %3d %-18s %-12s matched=%s unknown=%s other=%s", conf, status_of(ev), s.scheme_code,
+                 ev["matched"], ev["core_unknown"] + ev["sec_unknown"], ev["other"])
 
-    matched_codes = [r["scheme_code"] for r in final]
-    scheme_map = {s.scheme_code: s for s in
-                  db.scalars(select(Scheme).where(Scheme.scheme_code.in_(matched_codes))).all()}
+    texts = [explain_en(ev) for _, _, _, ev in final]
+    if body.language != "en":
+        texts = translate_texts(texts, body.language)
+        ensure_translated(db, [s for _, _, s, _ in final], body.language)
 
     results = []
-    for item in final:
-        code = item["scheme_code"]
-        if code not in scheme_map:
-            continue
-        scheme = scheme_map[code]
+    for (conf, _, s, ev), text in zip(final, texts):
+        missing = list(dict.fromkeys(ev["core_unknown"] + ev["sec_unknown"]))
+        reasons = [
+            MatchReasonOut(factor="status", matched=status_of(ev), weight=0),
+            MatchReasonOut(factor="llm_eligibility", matched=text, weight=conf),
+        ]
+        if missing:
+            reasons.append(MatchReasonOut(factor="missing_information", matched=", ".join(missing), weight=0))
         results.append(SchemeMatch(
-            scheme_id=code,
-            name=scheme.localized("name", body.language),
-            match_score=item.get("match_score", 50),
-            reasons=[MatchReasonOut(
-                factor="llm_eligibility",
-                matched=item.get("reason", "Eligible based on provided information"),
-                weight=item.get("match_score", 50)
-            )],
-            warnings=[scheme.warning] if scheme.warning else [],
+            scheme_id=s.scheme_code,
+            name=s.localized("name", body.language),
+            match_score=conf,
+            reasons=reasons,
+            warnings=[s.warning] if s.warning else [],
         ))
-
     return results
