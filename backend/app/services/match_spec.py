@@ -264,7 +264,6 @@ def confidence(ev, rel):
         s = min(s, 92)         # unverified extra conditions: never present as certain
     return int(max(0, min(100, round(s))))
 
-
 def status_of(ev):
     if ev["core_unknown"] or ev["sec_unknown"] or ev["other"]:
         return "check_eligibility"
