@@ -27,7 +27,7 @@ from app.services.match_spec import (  # noqa: E402
 )
 
 logger = logging.getLogger(__name__)
-IGNORED_KEYS = {"match_spec", "needs_review", "_field_sources"}
+IGNORED_KEYS = {"match_spec", "needs_review", "_field_sources", "featured"}
 
 INSTRUCTIONS = f"""You convert Indian government scheme eligibility information into structured requirements. Use ONLY the information given for each scheme. Never guess.
 For each scheme return an object with these keys:

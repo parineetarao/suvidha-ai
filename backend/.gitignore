@@ -43,3 +43,6 @@ app/ingestion/_debug_dumps/
 schemes_dump.sql
 dev.log
 tsconfig.tsbuildinfo
+
+*.backup
+famous_slugs_resolved.txt

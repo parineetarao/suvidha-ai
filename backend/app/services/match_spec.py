@@ -1,8 +1,7 @@
 """
-Deterministic eligibility matching. Each scheme gets a structured "match_spec"
-(extracted ONCE by scripts/extract_match_specs.py, stored inside
-eligibility_rules["match_spec"]). At search time a profile is compared against it in
-plain code, so results are consistent, ordered by confidence, and language-independent.
+Deterministic eligibility matching. Each scheme has a structured match_spec (extracted once by
+scripts/extract_match_specs.py, stored in eligibility_rules["match_spec"]). At search time a
+profile is compared against it in plain code, so results are consistent and language-independent.
 """
 import re
 
@@ -14,8 +13,7 @@ OCCUPATION_GROUPS = [
     "fisherman", "ex_serviceman", "government_employee", "entrepreneur", "self_employed",
     "unemployed", "homemaker", "artist_performer", "other",
 ]
-# A mismatch on these excludes a scheme. The rest can overlap with another job, so a
-# mismatch there only means "unknown".
+# A mismatch on these excludes a scheme. The rest can overlap with another job.
 STRICT_GROUPS = {
     "farmer", "agricultural_laborer", "student", "teacher_faculty", "engineer_scientist",
     "health_worker", "construction_worker", "artisan_craftsperson", "fisherman",
@@ -27,6 +25,8 @@ FLAG_LABELS = {
     "widow": "widow status", "disabled": "disability", "bpl": "BPL status",
     "senior_citizen": "senior citizen status (age 60+)", "transgender": "gender identity",
 }
+# Rough age windows for a coarse life stage implied by the user's own words (used only when no age is given).
+LIFE_STAGES = {"child": (0, 17), "adult": (18, 64), "senior": (60, 120)}
 _OCC_KEYWORDS = [
     ("teacher_faculty", r"professor|lecturer|teacher|faculty|academic"),
     ("farmer", r"farm|kisan|agricultur|cultivat"),
@@ -87,8 +87,12 @@ def normalize_profile(p):
         not_groups.add("student")
     if p.get("is_farmer") is False:
         not_groups.add("farmer")
+    stage = p.get("life_stage") if p.get("life_stage") in LIFE_STAGES else None
+    if age is not None:
+        stage = "child" if age < 18 else ("senior" if age >= 60 else "adult")
     return {
         "age": age,
+        "stage": stage,
         "state": canonical_state(p.get("state")),
         "gender": gender,
         "income": _num(p.get("income_annual_inr")),
@@ -103,6 +107,15 @@ def normalize_profile(p):
         "groups": groups,
         "not_groups": not_groups,
     }
+
+
+def has_facts(prof):
+    """True if the user gave at least one personal fact (negations like 'not a farmer' don't count)."""
+    return bool(
+        prof["age"] is not None or prof["state"] or prof["gender"] or prof["income"] is not None
+        or prof["categories"] or prof["groups"] or prof["stage"]
+        or any(v is not None for v in prof["flags"].values())
+    )
 
 
 def normalize_spec(raw):
@@ -136,9 +149,25 @@ def normalize_spec(raw):
     }
 
 
+def has_basis(spec):
+    """True if we hold at least one real eligibility fact about this scheme."""
+    if not isinstance(spec, dict):
+        return False
+    if spec.get("institutional"):
+        return True
+    for key in ("states", "categories_any", "flags_all", "occupations_any"):
+        if spec.get(key):
+            return True
+    for key in ("gender", "age_min", "age_max", "income_max"):
+        if spec.get(key) is not None:
+            return True
+    return any(isinstance(o, str) and "not stated" not in o.lower()
+               for o in (spec.get("other_conditions") or []))
+
+
 def evaluate(spec, prof, scope=frozenset()):
     """Compares one scheme spec with one normalized profile.
-    scope: states the scheme is limited to (from ministry/reviewed rules), overrides spec states."""
+    scope: states the scheme is limited to (from ministry/reviewed rules); overrides spec states."""
     ev = {"excluded": False, "violations": [], "core_unknown": [], "sec_unknown": [],
           "core_sat": 0, "sec_sat": 0, "matched": [],
           "other": list(spec.get("other_conditions") or [])}
@@ -181,6 +210,7 @@ def evaluate(spec, prof, scope=frozenset()):
             ev["core_sat"] += 1
             ev["matched"].append(FLAG_LABELS[flag])
         elif val is False:
+            # a stated negative ("I am not a widow") excludes; reaching here means the extractor reported it
             violate(f"requires {FLAG_LABELS[flag]}")
         else:
             ev["core_unknown"].append(FLAG_LABELS[flag])
@@ -202,6 +232,27 @@ def evaluate(spec, prof, scope=frozenset()):
         else:
             ev["core_unknown"].append("occupation")
 
+    # ---- age: a life-stage bound (children / seniors) defines the audience, so it counts as core ----
+    lo, hi = spec.get("age_min"), spec.get("age_max")
+    if lo is not None or hi is not None:
+        narrow = (hi is not None and hi < 25) or (lo is not None and lo >= 50)
+        bucket = LIFE_STAGES.get(prof.get("stage"))
+        if prof["age"] is not None:
+            if lo is not None and prof["age"] < lo:
+                violate(f"minimum age {lo}")
+            elif hi is not None and prof["age"] > hi:
+                violate(f"maximum age {hi}")
+            else:
+                ev["core_sat" if narrow else "sec_sat"] += 1
+                ev["matched"].append("age")
+        elif bucket and ((hi is not None and bucket[0] > hi) or (lo is not None and bucket[1] < lo)):
+            violate("age range does not fit your life stage")
+        elif bucket and (lo is None or bucket[0] >= lo) and (hi is None or bucket[1] <= hi):
+            ev["core_sat" if narrow else "sec_sat"] += 1
+            ev["matched"].append("age group")
+        else:
+            ev["core_unknown" if narrow else "sec_unknown"].append("age")
+
     # ---- secondary: limits. Unknown here lowers confidence a little. ----
     states = set(scope) if scope else set(spec.get("states") or [])
     if states:
@@ -213,18 +264,6 @@ def evaluate(spec, prof, scope=frozenset()):
                 violate("limited to " + "/".join(sorted(states)))
         else:
             ev["sec_unknown"].append("state of residence")
-
-    lo, hi = spec.get("age_min"), spec.get("age_max")
-    if lo is not None or hi is not None:
-        if prof["age"] is None:
-            ev["sec_unknown"].append("age")
-        elif lo is not None and prof["age"] < lo:
-            violate(f"minimum age {lo}")
-        elif hi is not None and prof["age"] > hi:
-            violate(f"maximum age {hi}")
-        else:
-            ev["sec_sat"] += 1
-            ev["matched"].append("age")
 
     inc = spec.get("income_max")
     if inc:
@@ -238,31 +277,16 @@ def evaluate(spec, prof, scope=frozenset()):
     return ev
 
 
-def has_basis(spec):
-    """True if we hold at least one real eligibility fact about this scheme."""
-    if not isinstance(spec, dict):
-        return False
-    if spec.get("institutional"):
-        return True            # known to be institutional; evaluate() excludes it
-    for key in ("states", "categories_any", "flags_all", "occupations_any"):
-        if spec.get(key):
-            return True
-    for key in ("gender", "age_min", "age_max", "income_max"):
-        if spec.get(key) is not None:
-            return True
-    return any(isinstance(o, str) and "not stated" not in o.lower()
-               for o in (spec.get("other_conditions") or []))
-
-
 def confidence(ev, rel):
-    """0-100. rel (0-1) is how relevant the scheme is to the query text."""
-    s = 25 + 40 * max(0.0, min(1.0, rel))
+    """0-100. Verified facts dominate; query relevance (rel 0-1) only breaks ties."""
+    s = 35 + 10 * max(0.0, min(1.0, rel))
     s += 15 * min(ev["core_sat"], 2) + 5 * min(ev["sec_sat"], 3)
     s -= (22 * min(len(ev["core_unknown"]), 2) + 5 * min(len(ev["sec_unknown"]), 3)
           + 3 * min(len(ev["other"]), 3))
     if ev["other"]:
         s = min(s, 92)         # unverified extra conditions: never present as certain
     return int(max(0, min(100, round(s))))
+
 
 def status_of(ev):
     if ev["core_unknown"] or ev["sec_unknown"] or ev["other"]:

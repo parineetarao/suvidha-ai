@@ -12,6 +12,7 @@ Supports multilingual queries through the configured LLM providers.
 """
 
 import logging
+import re
 
 from dotenv import load_dotenv
 
@@ -60,6 +61,7 @@ CRITICAL RULES:
 - is_student should be false when a professional occupation is
   explicitly stated and there is no indication that the person is
   also currently studying. Use null if the situation is unclear.
+- is_bpl, is_widow, is_farmer, is_student: set to true ONLY if the user states it. Set false ONLY if they explicitly say they are NOT (for example "I am not a student"). If the topic is not mentioned, it MUST be null. Never infer false from silence or from other details such as occupation, gender, or age.
 - Detect the language of the user's query and return its language
   code in raw_language.
 - Output valid JSON only, with no additional text.
@@ -72,6 +74,7 @@ Output this JSON structure:
   "age": <number or null>,
   "occupation": <string or null — their job/profession, ALWAYS written in English>,
   "occupation_group": <one of "farmer","agricultural_laborer","student","teacher_faculty","engineer_scientist","health_worker","construction_worker","unorganised_worker","artisan_craftsperson","fisherman","ex_serviceman","government_employee","entrepreneur","self_employed","unemployed","homemaker","artist_performer","other", or null if not stated>,
+  "life_stage": <"child" if clearly under 18; "adult" if their own words imply a working-age adult (an occupation such as farmer, professor, housewife, driver); "senior" if retired or elderly; otherwise null. Never guess a number>,
   "state": <string or null>,
   "gender": <"male", "female", "other", or null>,
   "income_annual_inr": <number or null>,
@@ -89,6 +92,11 @@ Output this JSON structure:
     try:
         parsed = parse_json(chat_json(prompt))
         profile = {**_empty_profile(), **parsed}
+        low = query.lower()
+        denied = bool(re.search(r"\bnot\b|\bno\b|n't|नहीं|नही", low))
+        for key in ("is_bpl", "is_widow", "is_farmer", "is_student"):
+            if profile.get(key) is False and not denied:
+                profile[key] = None      # a "false" with no negation in the query is an invented fact
         logger.info("Extracted profile: %s", profile)
         return profile
 
@@ -105,6 +113,7 @@ def _empty_profile() -> dict:
         "age": None,
         "occupation": None,
         "occupation_group": None,
+        "life_stage": None,
         "state": None,
         "gender": None,
         "income_annual_inr": None,

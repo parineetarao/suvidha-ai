@@ -272,83 +272,129 @@ def smart_search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
 
     from app.services.candidate_filter import scheme_state_scope
     from app.services.lazy_translate import ensure_translated, translate_texts
-    from app.services.match_spec import (confidence, evaluate, explain_en, has_basis,
+    from app.services.match_spec import (confidence, evaluate, explain_en, has_basis, has_facts,
                                          normalize_profile, status_of)
+    from app.services.name_match import find_name_matches
     from app.services.query_understanding import extract_profile_from_query
 
     log = logging.getLogger("smart_search")
     top_n = int(os.environ.get("SMART_SEARCH_MAX", "10"))
-    floor = int(os.environ.get("SMART_SEARCH_MIN_CONFIDENCE", "40"))
     pool = int(os.environ.get("SMART_SEARCH_POOL", "300"))
+    topical_k = int(os.environ.get("SMART_SEARCH_TOPICAL_K", "15"))
+    min_topical = float(os.environ.get("SMART_SEARCH_MIN_TOPICAL_SCORE", "0.12"))
+    floor = int(os.environ.get("SMART_SEARCH_MIN_CONFIDENCE", "30"))
+    featured_bonus = int(os.environ.get("SMART_SEARCH_FEATURED_BONUS", "10"))
+    state_penalty = int(os.environ.get("SMART_SEARCH_STATE_PENALTY", "10"))
 
     profile = extract_profile_from_query(body.query)
     prof = normalize_profile(profile)
-    raw = hybrid_search(db, query=body.query, language=body.language, limit=pool)
-    if not raw:
-        return []
+    facts = has_facts(prof)
 
+    # 1) schemes the user is asking for BY NAME always come first
+    name_rows = (db.query(Scheme.scheme_code, Scheme.name, Scheme.translations)
+                 .filter(Scheme.is_published.is_(True)).all())
+    pinned_codes = find_name_matches(name_rows, body.query, body.language)
+
+    raw = hybrid_search(db, query=body.query, language=body.language, limit=pool) or []
     scores = [r.get("score") for r in raw if isinstance(r.get("score"), (int, float))]
-    top_score = max(scores) if scores else 0
+    score_ok = (not scores) or max(scores) >= min_topical
 
-    def relevance(r, rank):
-        sc = r.get("score")
-        if isinstance(sc, (int, float)) and top_score > 0:
-            return max(0.0, sc / top_score)
-        return (1 - rank / max(len(raw), 1)) ** 2
+    blank_ev = {"excluded": False, "violations": [], "core_unknown": [], "sec_unknown": [],
+                "core_sat": 0, "sec_sat": 0, "matched": [], "other": []}
+    entries = []
+    if pinned_codes:
+        found = {s.scheme_code: s for s in db.query(Scheme).filter(Scheme.scheme_code.in_(pinned_codes)).all()}
+        for code in pinned_codes:
+            s = found.get(code)
+            if not s:
+                continue
+            spec = (s.eligibility_rules or {}).get("match_spec")
+            ev = evaluate(spec, prof, scheme_state_scope(s)) if spec else dict(blank_ev)
+            entries.append({"key": 1000, "conf": 60 if ev["excluded"] else 90, "rank": -1,
+                            "s": s, "ev": ev, "pinned": True})
 
-    scored, seen, no_spec, no_basis, excluded = [], set(), 0, 0, 0
+    scored_n, seen = 0, set()
+    no_spec = no_basis = excluded = gated = 0
     for rank, r in enumerate(raw):
         s = r["scheme"]
-        if s.scheme_code in seen:
+        if s.scheme_code in seen or s.scheme_code in pinned_codes:
             continue
         seen.add(s.scheme_code)
-        spec = (s.eligibility_rules or {}).get("match_spec")
+        rules = s.eligibility_rules or {}
+        spec = rules.get("match_spec")
         if not spec:
             no_spec += 1
             continue
         if not has_basis(spec):
-            no_basis += 1      # nothing verifiable about who this is for: never recommend it
+            no_basis += 1
             continue
-        ev = evaluate(spec, prof, scheme_state_scope(s))
+        scope = scheme_state_scope(s)
+        ev = evaluate(spec, prof, scope)
         if ev["excluded"]:
             excluded += 1
             continue
-        conf = confidence(ev, relevance(r, rank))
-        if conf >= floor:
-            scored.append((conf, rank, s, ev))
+        verified = ev["core_sat"] + ev["sec_sat"]
+        topical = rank < topical_k
+        if facts:
+            ok = (verified >= 1 or topical) and (not ev["core_unknown"] or ev["core_sat"] >= 1)
+        else:
+            ok = topical and score_ok
+        if not ok:
+            gated += 1
+            continue
+        conf = confidence(ev, 1 - rank / max(len(raw), 1))
+        if conf < floor:
+            continue
+        key = conf
+        if rules.get("featured"):
+            key += featured_bonus                  # well-known schemes outrank obscure ones
+        if scope and not prof["state"]:
+            key -= state_penalty                   # state-limited scheme, user's state unknown
+        entries.append({"key": key, "conf": conf, "rank": rank, "s": s, "ev": ev, "pinned": False})
+        scored_n += 1
 
-    if seen and no_spec == len(seen):
+    if raw and no_spec == len(seen) and not entries:
         raise HTTPException(status_code=503,
                             detail="Scheme match data is not prepared yet (run scripts.extract_match_specs).")
 
-    scored.sort(key=lambda x: (-x[0], x[1]))
-    final = scored[:top_n]
-    log.info("smart-search '%s': profile=%s | %d evaluated, %d excluded, %d no verifiable info, "
-             "%d no spec, %d above floor, %d returned",
-             body.query[:60], {k: v for k, v in profile.items() if v not in (None, [], "")},
-             len(seen), excluded, no_basis, no_spec, len(scored), len(final))
-    for conf, _, s, ev in final:
-        log.info("  %3d %-18s %-12s matched=%s unknown=%s other=%s", conf, status_of(ev), s.scheme_code,
-                 ev["matched"], ev["core_unknown"] + ev["sec_unknown"], ev["other"])
+    entries.sort(key=lambda e: (-e["key"], e["rank"]))
+    final = entries[:top_n]
+    log.info("smart-search '%s': facts=%s pinned=%s profile=%s | %d excluded, %d no verifiable info, "
+             "%d gated out, %d no spec, %d returned",
+             body.query[:60], facts, pinned_codes,
+             {k: v for k, v in profile.items() if v not in (None, [], "")},
+             excluded, no_basis, gated, no_spec, len(final))
+    for e in final:
+        log.info("  %4d %3d %-18s %-12s matched=%s unknown=%s", e["key"], e["conf"], status_of(e["ev"]),
+                 e["s"].scheme_code, e["ev"]["matched"], e["ev"]["core_unknown"] + e["ev"]["sec_unknown"])
 
-    texts = [explain_en(ev) for _, _, _, ev in final]
+    texts = []
+    for e in final:
+        ev = e["ev"]
+        if e["pinned"]:
+            note = ("Note: " + "; ".join(ev["violations"]) + ".") if ev["excluded"] else explain_en(ev)
+            texts.append("This matches the scheme name you searched for. " + note)
+        else:
+            texts.append(explain_en(ev))
     if body.language != "en":
         texts = translate_texts(texts, body.language)
-        ensure_translated(db, [s for _, _, s, _ in final], body.language)
+        ensure_translated(db, [e["s"] for e in final], body.language)
 
     results = []
-    for (conf, _, s, ev), text in zip(final, texts):
+    for e, text in zip(final, texts):
+        s, ev = e["s"], e["ev"]
         missing = list(dict.fromkeys(ev["core_unknown"] + ev["sec_unknown"]))
+        status = "check_eligibility" if ev["excluded"] else status_of(ev)
         reasons = [
-            MatchReasonOut(factor="status", matched=status_of(ev), weight=0),
-            MatchReasonOut(factor="llm_eligibility", matched=text, weight=conf),
+            MatchReasonOut(factor="status", matched=status, weight=0),
+            MatchReasonOut(factor="llm_eligibility", matched=text, weight=e["conf"]),
         ]
         if missing:
             reasons.append(MatchReasonOut(factor="missing_information", matched=", ".join(missing), weight=0))
         results.append(SchemeMatch(
             scheme_id=s.scheme_code,
             name=s.localized("name", body.language),
-            match_score=conf,
+            match_score=e["conf"],
             reasons=reasons,
             warnings=[s.warning] if s.warning else [],
         ))
