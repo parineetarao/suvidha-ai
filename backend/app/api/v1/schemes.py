@@ -269,8 +269,10 @@ def compare_schemes(
 def smart_search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
     import logging
     import os
+    import re
 
     from app.services.candidate_filter import scheme_state_scope
+    from app.services.event_gate import blocked_event
     from app.services.lazy_translate import ensure_translated, translate_texts
     from app.services.match_spec import (confidence, evaluate, explain_en, has_basis, has_facts,
                                          normalize_profile, status_of)
@@ -279,18 +281,21 @@ def smart_search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
 
     log = logging.getLogger("smart_search")
     top_n = int(os.environ.get("SMART_SEARCH_MAX", "10"))
-    pool = int(os.environ.get("SMART_SEARCH_POOL", "300"))
+    pool = int(os.environ.get("SMART_SEARCH_POOL", "700"))
     topical_k = int(os.environ.get("SMART_SEARCH_TOPICAL_K", "15"))
     min_topical = float(os.environ.get("SMART_SEARCH_MIN_TOPICAL_SCORE", "0.12"))
     floor = int(os.environ.get("SMART_SEARCH_MIN_CONFIDENCE", "30"))
     featured_bonus = int(os.environ.get("SMART_SEARCH_FEATURED_BONUS", "10"))
     state_penalty = int(os.environ.get("SMART_SEARCH_STATE_PENALTY", "10"))
+    targeted_bonus = int(os.environ.get("SMART_SEARCH_TARGETED_BONUS", "12"))
 
-    profile = extract_profile_from_query(body.query)
+    profile = dict(extract_profile_from_query(body.query))
+    if re.search(r"disab|divyang|handicap|दिव्यांग|अपंग|विकलांग", body.query, re.I):
+        profile["is_disabled"] = True       # the extractor only knows disability from a percentage
     prof = normalize_profile(profile)
     facts = has_facts(prof)
+    eff_floor = floor if facts else 10      # no personal details given: don't over-filter by unknowns
 
-    # 1) schemes the user is asking for BY NAME always come first
     name_rows = (db.query(Scheme.scheme_code, Scheme.name, Scheme.translations)
                  .filter(Scheme.is_published.is_(True)).all())
     pinned_codes = find_name_matches(name_rows, body.query, body.language)
@@ -313,8 +318,8 @@ def smart_search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
             entries.append({"key": 1000, "conf": 60 if ev["excluded"] else 90, "rank": -1,
                             "s": s, "ev": ev, "pinned": True})
 
-    scored_n, seen = 0, set()
-    no_spec = no_basis = excluded = gated = 0
+    seen = set()
+    no_spec = no_basis = excluded = gated = event_hidden = 0
     for rank, r in enumerate(raw):
         s = r["scheme"]
         if s.scheme_code in seen or s.scheme_code in pinned_codes:
@@ -327,6 +332,9 @@ def smart_search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
             continue
         if not has_basis(spec):
             no_basis += 1
+            continue
+        if blocked_event(s.name, spec, body.query):
+            event_hidden += 1
             continue
         scope = scheme_state_scope(s)
         ev = evaluate(spec, prof, scope)
@@ -343,15 +351,16 @@ def smart_search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
             gated += 1
             continue
         conf = confidence(ev, 1 - rank / max(len(raw), 1))
-        if conf < floor:
+        if conf < eff_floor:
             continue
-        key = conf
+        targeted = sum(1 for m in ev["matched"]
+                       if not m.startswith(("gender (", "state (", "income")) and m not in ("age", "age group"))
+        key = conf + targeted_bonus * min(targeted, 2)    # schemes aimed at what the user said rank first
         if rules.get("featured"):
-            key += featured_bonus                  # well-known schemes outrank obscure ones
+            key += featured_bonus
         if scope and not prof["state"]:
-            key -= state_penalty                   # state-limited scheme, user's state unknown
+            key -= state_penalty
         entries.append({"key": key, "conf": conf, "rank": rank, "s": s, "ev": ev, "pinned": False})
-        scored_n += 1
 
     if raw and no_spec == len(seen) and not entries:
         raise HTTPException(status_code=503,
@@ -359,14 +368,11 @@ def smart_search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
 
     entries.sort(key=lambda e: (-e["key"], e["rank"]))
     final = entries[:top_n]
-    log.info("smart-search '%s': facts=%s pinned=%s profile=%s | %d excluded, %d no verifiable info, "
-             "%d gated out, %d no spec, %d returned",
+    log.info("smart-search '%s': facts=%s pinned=%s profile=%s | %d excluded, %d life-event hidden, "
+             "%d gated out, %d returned",
              body.query[:60], facts, pinned_codes,
              {k: v for k, v in profile.items() if v not in (None, [], "")},
-             excluded, no_basis, gated, no_spec, len(final))
-    for e in final:
-        log.info("  %4d %3d %-18s %-12s matched=%s unknown=%s", e["key"], e["conf"], status_of(e["ev"]),
-                 e["s"].scheme_code, e["ev"]["matched"], e["ev"]["core_unknown"] + e["ev"]["sec_unknown"])
+             excluded, event_hidden, gated, len(final))
 
     texts = []
     for e in final:

@@ -73,6 +73,8 @@ def normalize_profile(p):
     if og in OCCUPATION_GROUPS and og != "other":
         groups.add(og)
     occ = p.get("occupation")
+    if gender is None and isinstance(occ, str) and re.search(r"housewife|house wife|गृहिणी", occ, re.I):
+        gender = "female"      # the word itself implies it; the extractor sometimes leaves gender empty
     if not groups and isinstance(occ, str):
         for grp, pat in _OCC_KEYWORDS:
             if re.search(pat, occ, re.I):
@@ -99,7 +101,7 @@ def normalize_profile(p):
         "categories": {c for c in cats_raw if c in CATEGORIES},
         "flags": {
             "widow": p.get("is_widow") if isinstance(p.get("is_widow"), bool) else None,
-            "disabled": True if (dp and dp > 0) else None,
+            "disabled": True if ((dp and dp > 0) or p.get("is_disabled") is True) else None,
             "bpl": bpl if isinstance(bpl, bool) else None,
             "senior_citizen": (age >= 60) if age is not None else None,
             "transgender": True if gender == "other" else (False if gender in ("male", "female") else None),
@@ -244,12 +246,12 @@ def evaluate(spec, prof, scope=frozenset()):
                 violate(f"maximum age {hi}")
             else:
                 ev["core_sat" if narrow else "sec_sat"] += 1
-                ev["matched"].append("age")
+                ev["matched"].append("age range" if narrow else "age")
         elif bucket and ((hi is not None and bucket[0] > hi) or (lo is not None and bucket[1] < lo)):
             violate("age range does not fit your life stage")
         elif bucket and (lo is None or bucket[0] >= lo) and (hi is None or bucket[1] <= hi):
             ev["core_sat" if narrow else "sec_sat"] += 1
-            ev["matched"].append("age group")
+            ev["matched"].append("age range" if narrow else "age group")
         else:
             ev["core_unknown" if narrow else "sec_unknown"].append("age")
 

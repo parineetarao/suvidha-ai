@@ -133,3 +133,12 @@ def test_silence_is_not_a_negative():
 def test_explicit_denial_still_excludes():
     p = normalize_profile({"is_bpl": False})
     assert evaluate(spec(flags_all=["bpl"]), p)["excluded"]
+
+def test_is_disabled_flag_counts_as_disabled():
+    ev = evaluate(spec(flags_all=["disabled"]), normalize_profile({"is_disabled": True}))
+    assert ev["core_sat"] == 1 and not ev["core_unknown"]
+
+
+def test_senior_stage_pension_scheme_is_labelled_age_range():
+    ev = evaluate(spec(age_min=60), normalize_profile({"life_stage": "senior"}))
+    assert "age range" in ev["matched"]

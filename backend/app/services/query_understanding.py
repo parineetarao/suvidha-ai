@@ -23,7 +23,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
-def extract_profile_from_query(query: str) -> dict:
+def _extract_profile_uncached(query: str) -> dict:
     """
     Takes a free-text user query in any supported language and returns
     a structured profile dictionary.
@@ -127,3 +127,39 @@ def _empty_profile() -> dict:
         "family_size": None,
         "raw_language": "en",
     }
+import json
+import threading
+from pathlib import Path
+
+_CACHE_FILE = Path(__file__).resolve().parents[2] / "profile_cache.json"
+_PCACHE = None
+_LOCK = threading.Lock()
+
+
+def _load_cache():
+    global _PCACHE
+    if _PCACHE is None:
+        try:
+            _PCACHE = json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            _PCACHE = {}
+    return _PCACHE
+
+
+def extract_profile_from_query(query):
+    """Cached on disk, so repeated queries (and demo-day bursts) don't spend LLM quota."""
+    key = " ".join((query or "").lower().split())
+    with _LOCK:
+        hit = _load_cache().get(key)
+    if hit is not None:
+        return dict(hit)
+    profile = _extract_profile_uncached(query)
+    if any(v not in (None, [], "") for k, v in profile.items() if k != "raw_language"):
+        with _LOCK:
+            cache = _load_cache()
+            cache[key] = profile
+            try:
+                _CACHE_FILE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+            except Exception:
+                pass
+    return profile
