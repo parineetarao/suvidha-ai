@@ -103,7 +103,7 @@ def normalize_profile(p):
             "widow": p.get("is_widow") if isinstance(p.get("is_widow"), bool) else None,
             "disabled": True if ((dp and dp > 0) or p.get("is_disabled") is True) else None,
             "bpl": bpl if isinstance(bpl, bool) else None,
-            "senior_citizen": (age >= 60) if age is not None else None,
+            "senior_citizen": (age >= 60) if age is not None else (True if stage == "senior" else None),
             "transgender": True if gender == "other" else (False if gender in ("male", "female") else None),
         },
         "groups": groups,
@@ -252,6 +252,10 @@ def evaluate(spec, prof, scope=frozenset()):
         elif bucket and (lo is None or bucket[0] >= lo) and (hi is None or bucket[1] <= hi):
             ev["core_sat" if narrow else "sec_sat"] += 1
             ev["matched"].append("age range" if narrow else "age group")
+        elif prof.get("stage") == "senior" and hi is None and lo is not None and 60 < lo <= 70:
+            ev["core_sat"] += 1
+            ev["matched"].append("age range")
+            ev["other"].append(f"minimum age {lo}")      # a senior may still be under the 65+ cut-off
         else:
             ev["core_unknown" if narrow else "sec_unknown"].append("age")
 

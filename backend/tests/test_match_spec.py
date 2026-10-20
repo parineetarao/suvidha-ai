@@ -142,3 +142,11 @@ def test_is_disabled_flag_counts_as_disabled():
 def test_senior_stage_pension_scheme_is_labelled_age_range():
     ev = evaluate(spec(age_min=60), normalize_profile({"life_stage": "senior"}))
     assert "age range" in ev["matched"]
+
+def test_senior_life_stage_satisfies_senior_citizen_flag():
+    ev = evaluate(spec(flags_all=["senior_citizen"]), normalize_profile({"life_stage": "senior"}))
+    assert ev["core_sat"] == 1 and not ev["core_unknown"]
+
+def test_senior_stage_fits_pension_age_65_with_a_note():
+    ev = evaluate(spec(age_min=65), normalize_profile({"life_stage": "senior"}))
+    assert ev["core_sat"] == 1 and not ev["core_unknown"] and "minimum age 65" in ev["other"]

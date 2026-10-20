@@ -341,7 +341,7 @@ def smart_search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
         if ev["excluded"]:
             excluded += 1
             continue
-        verified = ev["core_sat"] + ev["sec_sat"]
+        verified = ev["core_sat"] + sum(1 for m in ev["matched"] if m.startswith(("state (", "income")))
         topical = rank < topical_k
         if facts:
             ok = (verified >= 1 or topical) and (not ev["core_unknown"] or ev["core_sat"] >= 1)
@@ -351,11 +351,11 @@ def smart_search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
             gated += 1
             continue
         conf = confidence(ev, 1 - rank / max(len(raw), 1))
-        if conf < eff_floor:
-            continue
         targeted = sum(1 for m in ev["matched"]
                        if not m.startswith(("gender (", "state (", "income")) and m not in ("age", "age group"))
         key = conf + targeted_bonus * min(targeted, 2)    # schemes aimed at what the user said rank first
+        if key < eff_floor:
+            continue    # schemes aimed at what the user said rank first
         if rules.get("featured"):
             key += featured_bonus
         if scope and not prof["state"]:
