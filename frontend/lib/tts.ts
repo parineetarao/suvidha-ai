@@ -11,7 +11,7 @@
 
 import type { VoiceLanguage } from "@/lib/voice"
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1"
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010/api/v1"
 const TEMP_JWT = process.env.NEXT_PUBLIC_TEMP_JWT ?? ""
 
 export async function synthesizeSpeech(text: string, lang: VoiceLanguage): Promise<Blob> {
