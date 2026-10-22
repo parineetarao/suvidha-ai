@@ -61,6 +61,7 @@ CRITICAL RULES:
 - is_student should be false when a professional occupation is
   explicitly stated and there is no indication that the person is
   also currently studying. Use null if the situation is unclear.
+- gender: set it ONLY if the user states it ("I am a woman", "girl", "he"). NEVER infer gender from a person's name.
 - is_bpl, is_widow, is_farmer, is_student: set to true ONLY if the user states it. Set false ONLY if they explicitly say they are NOT (for example "I am not a student"). If the topic is not mentioned, it MUST be null. Never infer false from silence or from other details such as occupation, gender, or age.
 - Detect the language of the user's query and return its language
   code in raw_language.
@@ -75,6 +76,7 @@ Output this JSON structure:
   "occupation": <string or null — their job/profession, ALWAYS written in English>,
   "occupation_group": <one of "farmer","agricultural_laborer","student","teacher_faculty","engineer_scientist","health_worker","construction_worker","unorganised_worker","artisan_craftsperson","fisherman","ex_serviceman","government_employee","entrepreneur","self_employed","unemployed","homemaker","artist_performer","other", or null if not stated>,
   "life_stage": <"child" if clearly under 18; "adult" if their own words imply a working-age adult (an occupation such as farmer, professor, housewife, driver); "senior" if retired or elderly; otherwise null. Never guess a number>,
+  "has_request": <true if the message describes the user's situation or says what help or scheme they want, or names a scheme; false if it is only a greeting, a person's name, small talk, or contains nothing that could help find a scheme>,
   "state": <string or null>,
   "gender": <"male", "female", "other", or null>,
   "income_annual_inr": <number or null>,
@@ -114,6 +116,7 @@ def _empty_profile() -> dict:
         "occupation": None,
         "occupation_group": None,
         "life_stage": None,
+        "has_request": None,
         "state": None,
         "gender": None,
         "income_annual_inr": None,

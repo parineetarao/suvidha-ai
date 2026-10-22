@@ -1,7 +1,7 @@
 import sys
 import httpx
 
-BASE = "http://localhost:8000/api/v1"
+BASE = "http://localhost:8010/api/v1"
 CASES = [
     ("ladki bahin yojana", "en", "mmlby"),
     ("I am a widow from Maharashtra", "en", "ignwpsm"),

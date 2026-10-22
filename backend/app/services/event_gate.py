@@ -25,3 +25,19 @@ def blocked_event(name, spec, query):
         if ev["scheme"].search(name or "") or ev["scheme"].search(other):
             return True
     return False
+
+_ENROLMENT = re.compile(
+    r"\b(?:pursu\w+|enrol\w*|admitted|admission|currently\s+studying|studying\s+in"
+    r"|full[- ]time\s+(?:student|m\.?\s?phil|ph\.?\s?d))\b", re.I)
+_WORKING = {"teacher_faculty", "farmer", "engineer_scientist", "health_worker", "government_employee",
+            "construction_worker", "artisan_craftsperson", "fisherman", "ex_serviceman", "entrepreneur",
+            "self_employed"}
+
+
+def blocked_enrolment(name, spec, eligibility_text, prof):
+    """Hide schemes that require being enrolled in a course when the user described a working life."""
+    groups = set((prof or {}).get("groups") or [])
+    if not (groups & _WORKING) or "student" in groups:
+        return False
+    other = " ".join((spec or {}).get("other_conditions") or [])
+    return bool(_ENROLMENT.search(other) or _ENROLMENT.search((eligibility_text or "")[:500]))

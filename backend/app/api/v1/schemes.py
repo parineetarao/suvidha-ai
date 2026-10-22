@@ -272,7 +272,7 @@ def smart_search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
     import re
 
     from app.services.candidate_filter import scheme_state_scope
-    from app.services.event_gate import blocked_event
+    from app.services.event_gate import blocked_enrolment, blocked_event
     from app.services.lazy_translate import ensure_translated, translate_texts
     from app.services.match_spec import (confidence, evaluate, explain_en, has_basis, has_facts,
                                          normalize_profile, status_of)
@@ -290,6 +290,9 @@ def smart_search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
     targeted_bonus = int(os.environ.get("SMART_SEARCH_TARGETED_BONUS", "12"))
 
     profile = dict(extract_profile_from_query(body.query))
+    from app.services.intent import query_needs_details
+    if query_needs_details(db, body.query, body.language, profile):
+        return []     # nothing to search for (a name, a greeting): the UI asks for details instead
     if re.search(r"disab|divyang|handicap|दिव्यांग|अपंग|विकलांग", body.query, re.I):
         profile["is_disabled"] = True       # the extractor only knows disability from a percentage
     prof = normalize_profile(profile)
@@ -334,6 +337,9 @@ def smart_search_schemes(body: SchemeSearchIn, db: Session = Depends(get_db)):
             no_basis += 1
             continue
         if blocked_event(s.name, spec, body.query):
+            event_hidden += 1
+            continue
+        if blocked_enrolment(s.name, spec, s.eligibility_text, prof):
             event_hidden += 1
             continue
         scope = scheme_state_scope(s)

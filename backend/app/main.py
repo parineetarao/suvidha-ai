@@ -30,6 +30,7 @@ from app.db.session import engine
 # listed next.
 import app.db.base  # noqa: E402, F401
 from app.api.v1.schemes import router as schemes_router
+from app.api.v1.scheme_kit import router as scheme_kit_router
 from app.services.embedding_service import embedding_service
 
 from starlette.middleware.sessions import SessionMiddleware
@@ -112,6 +113,7 @@ def create_app() -> FastAPI:
 
 
     app.include_router(schemes_router, prefix="/api/v1")
+    app.include_router(scheme_kit_router, prefix="/api/v1")
 
 
     return app
