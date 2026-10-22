@@ -178,6 +178,10 @@ export const DR = {
       message: { 'hi-IN': 'आधार जैसी 12-अंकों की संख्या नहीं मिली।', 'mr-IN': 'आधारसारखी 12-अंकी संख्या सापडली नाही.', 'en-IN': 'A 12-digit Aadhaar-like number was not found.' } as Dict,
       suggestion: { 'hi-IN': 'सुनिश्चित करें कि आधार नंबर वाला हिस्सा फोटो में साफ़ दिखे।', 'mr-IN': 'आधार क्रमांक असलेला भाग फोटोमध्ये स्पष्ट दिसेल याची खात्री करा.', 'en-IN': 'Make sure the section with the Aadhaar number is clearly visible.' } as Dict,
     },
+    aadhaarNumberUnclear: {
+      message: { 'hi-IN': 'आधार नंबर पढ़ा गया, लेकिन कुछ अंक गलत पढ़े गए हो सकते हैं।', 'mr-IN': 'आधार क्रमांक वाचला गेला, पण काही अंक चुकीचे वाचले गेले असू शकतात.', 'en-IN': 'An Aadhaar number was read, but some digits may have been misread.' } as Dict,
+      suggestion: { 'hi-IN': 'अच्छी रोशनी में, बिना चमक के, आधार नंबर का साफ़ और सीधा फोटो लें।', 'mr-IN': 'चांगल्या प्रकाशात, चकाकीशिवाय, आधार क्रमांकाचा स्पष्ट आणि सरळ फोटो घ्या.', 'en-IN': 'Retake a sharp, straight photo of the Aadhaar number in good light without glare.' } as Dict,
+    },
     dobNotFound: {
       message: { 'hi-IN': 'जन्म तिथि या जन्म वर्ष नहीं मिला।', 'mr-IN': 'जन्मतारीख किंवा जन्म वर्ष सापडले नाही.', 'en-IN': 'A date of birth or year of birth was not found.' } as Dict,
       suggestion: { 'hi-IN': 'DOB वाला हिस्सा फोटो में साफ़ दिखे, यह सुनिश्चित करें।', 'mr-IN': 'DOB असलेला भाग फोटोमध्ये स्पष्ट दिसेल याची खात्री करा.', 'en-IN': 'Make sure the DOB section is clearly visible in the photo.' } as Dict,

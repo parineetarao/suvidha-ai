@@ -15,7 +15,7 @@
 // client in the app — reuse the same NEXT_PUBLIC_API_URL env var that
 // api-client.ts and tts.ts already read, so there's one source of truth
 // for the backend URL instead of two that can drift out of sync.
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8010/api/v1';
 
 export type ApiLanguage = 'en' | 'hi' | 'mr' | 'ta' | 'te' | 'kn' | 'ml' | 'bn' | 'gu' | 'pa';
 
@@ -140,7 +140,7 @@ export async function searchSchemes(
   language: ApiLanguage,
   limit = 10
 ): Promise<SchemeMatch[]> {
-  const res = await apiFetch(`${API_BASE_URL}/schemes/search`, {
+  const res = await apiFetch(`${API_BASE_URL}/schemes/smart-search`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, language, limit }),

@@ -7,7 +7,7 @@
  * exists yet, that's someone else's area.
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1"
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010/api/v1"
 
 // Real auth token, set by AuthContext after a successful login.
 // Falls back to the old TEMP_JWT only if no real session exists yet —

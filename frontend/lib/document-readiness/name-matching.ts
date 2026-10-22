@@ -167,7 +167,7 @@ const NON_NAME_HEADINGS = [
   'date of birth', 'dob', 'male', 'female', 'address', 'भारत सरकार', 'सरकार', 'जन्म तिथि', 'पता',
 ]
 
-function isKnownNonName(line: string): boolean {
+export function isKnownNonName(line: string): boolean {
   const lower = line.toLowerCase()
   return NON_NAME_HEADINGS.some((h) => lower.includes(h))
 }

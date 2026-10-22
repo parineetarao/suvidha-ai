@@ -24,7 +24,9 @@ if config.config_file_name is not None:
 
 # Single source of truth for the DB URL is app/config.py (reads .env),
 # not the sqlalchemy.url placeholder left in alembic.ini.
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# "%" is doubled because Alembic's config parser treats it as interpolation, and
+# URL-encoded passwords contain it (e.g. "@" becomes "%40").
+config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
 
 # Base.metadata is what autogenerate diffs against — see app/db/base.py for
 # how each member's models get registered onto it.
