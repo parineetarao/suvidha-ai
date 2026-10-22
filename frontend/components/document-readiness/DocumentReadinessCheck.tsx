@@ -5,7 +5,7 @@ import type { DocLang, DocumentIssue, DocumentReadinessResult, DocumentType, OCR
 import { DR, drt } from '@/lib/document-readiness/translations'
 import { runOcr } from '@/lib/document-readiness/ocr'
 import { assessImageQuality, loadImageBitmapFromFile } from '@/lib/document-readiness/image-quality'
-import { validateDocument } from '@/lib/document-readiness/validators'
+import { extractAadhaarDob, extractAadhaarNumber, validateDocument } from '@/lib/document-readiness/validators'
 import { compareNames } from '@/lib/document-readiness/name-matching'
 import type { ImageQualityWarning } from '@/lib/document-readiness/types'
 import { DEMO_SCENARIOS, buildDemoResult, type DemoScenario } from '@/lib/document-readiness/demo-data'
@@ -127,6 +127,10 @@ export function DocumentReadinessCheck({
 
       const ocrOutcome = await runOcr(targetFile, {
         includeMarathi: lang === 'mr-IN',
+        needsEnglishPass:
+          documentType === 'aadhaar'
+            ? (text) => !extractAadhaarNumber(text)?.checksumValid || !extractAadhaarDob(text)
+            : undefined,
         onStage: (update) => {
           if (mountedRef.current) setStage(update)
         },

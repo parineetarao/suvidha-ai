@@ -1,5 +1,6 @@
 from functools import lru_cache
 from logging import config
+from urllib.parse import quote_plus
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -48,8 +49,9 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
+        # Credentials are URL-encoded so passwords containing @, :, / or # don't break parsing.
         return (
-            f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
+            f"postgresql+psycopg://{quote_plus(self.postgres_user)}:{quote_plus(self.postgres_password)}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
